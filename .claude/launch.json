@@ -12,6 +12,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8732", "--directory", "testcases/html/walking_behaviour"],
       "port": 8732
+    },
+    {
+      "name": "textbox",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8733", "--directory", "testcases/html/textbox"],
+      "port": 8733
     }
   ]
 }

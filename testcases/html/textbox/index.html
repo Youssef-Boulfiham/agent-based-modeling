@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Textbox Sandbox — Agent Communication Log</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #14141a;
+      color: #e8e4dc;
+      font: 13px system-ui, monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 10px;
+      gap: 10px;
+    }
+    h3 { margin: 0; font-size: 16px; }
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    button {
+      background: #2d6cdf;
+      color: #fff;
+      border: 0;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font: 13px system-ui;
+    }
+    button:hover { background: #3b78e8; }
+    button.active { background: #4caf7d; }
+    .pill {
+      background: #23232c;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .pill b { color: #fff; }
+
+    #log-container {
+      flex: 1;
+      background: #0e0e13;
+      border: 1px solid #333;
+      border-radius: 4px;
+      overflow-y: auto;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .log-entry {
+      margin-bottom: 4px;
+      padding: 4px 6px;
+      border-radius: 2px;
+    }
+    .log-entry.user { background: #1a2238; }
+    .log-entry.agent { background: #1a2a1a; }
+    .log-timestamp { color: #888; font-size: 12px; }
+    .log-from { color: #e8e4dc; font-weight: normal; }
+    .log-to { color: #e8e4dc; font-weight: normal; }
+
+    .input-section {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    #input-field {
+      flex: 1;
+      background: #23232c;
+      color: #e8e4dc;
+      border: 1px solid #333;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font: 13px monospace;
+    }
+    #input-field:focus { outline: none; border-color: #2d6cdf; }
+    #input-field::selection { background: #2d6cdf; color: #fff; }
+    #send-btn {
+      background: #2d6cdf;
+      color: #fff;
+      border: 0;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font: 13px system-ui;
+    }
+    #send-btn:hover { background: #3b78e8; }
+  </style>
+</head>
+<body>
+
+<h3>Textbox Sandbox — Agent Communication Log</h3>
+
+<div class="controls">
+  <span class="pill">Frame <b id="frame">0</b></span>
+  <span class="pill">Agents <b id="agent-count">3</b></span>
+  <span class="pill">Log entries <b id="entry-count">0</b></span>
+  <button id="toggle-agent-agent">Hide Agent-Agent</button>
+  <button id="jump-to-bottom">Jump to Bottom</button>
+</div>
+
+<div id="log-container"></div>
+
+<div class="input-section">
+  <input id="input-field" type="text" placeholder="Type message... (Enter to send)">
+  <button id="send-btn">Send</button>
+</div>
+
+<script>
+// ============================================================================
+// Textbox Sandbox — Agent Communication Log
+// ============================================================================
+
+// Dummy agent state
+const AGENTS = [
+  { id: 0, name: "Agent A", color: "#4caf7d" },
+  { id: 1, name: "Agent B", color: "#2d6cdf" },
+  { id: 2, name: "Agent C", color: "#e0a23a" },
+];
+
+const DOMAINS = ["Domain A", "Domain B", "Domain C", "Domain D"];
+const ACTIONS = ["idle", "working", "moving"];
+
+let state = {
+  frame: 0,
+  agents: AGENTS.map(a => ({
+    id: a.id,
+    name: a.name,
+    pos: { x: Math.floor(Math.random()*40), y: Math.floor(Math.random()*28) },
+    domain: DOMAINS[Math.floor(Math.random()*DOMAINS.length)],
+    action: ACTIONS[Math.floor(Math.random()*ACTIONS.length)],
+  })),
+  log: [],
+  showAgentAgent: true,
+  taskQueue: [],  // priority queue for user + agent tasks
+  agentChatterPaused: false,
+};
+
+// localStorage key
+const STORAGE_KEY = "textbox_history";
+const MAX_LOG_SIZE = 1000;
+
+// Load from localStorage
+function loadHistory() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if(stored) {
+    try {
+      state.log = JSON.parse(stored);
+      document.getElementById("entry-count").textContent = state.log.length;
+    } catch(e) { console.error("Failed to load history", e); }
+  }
+}
+
+// Save to localStorage
+function saveHistory() {
+  if(state.log.length > MAX_LOG_SIZE) {
+    state.log = state.log.slice(-MAX_LOG_SIZE);
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.log));
+}
+
+// Add log entry
+function addLogEntry(from, to, text, agentState = null) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    from,
+    to,
+    text,
+    state: agentState,
+  };
+  state.log.push(entry);
+  document.getElementById("entry-count").textContent = state.log.length;
+  saveHistory();
+  renderLog();
+}
+
+// Render log
+function renderLog() {
+  const container = document.getElementById("log-container");
+  const filtered = state.log.filter(e => {
+    if(!state.showAgentAgent && e.from !== "user" && e.to !== "user") return false;
+    return true;
+  });
+
+  container.innerHTML = "";
+  filtered.forEach(entry => {
+    const div = document.createElement("div");
+    div.className = "log-entry";
+
+    if(entry.from === "user") div.className += " user";
+    else div.className += " agent";
+
+    const time = new Date(entry.timestamp).toLocaleTimeString();
+    let html = `<span class="log-timestamp">${time}</span> `;
+    html += `<span class="log-from">${entry.from}</span> → `;
+    html += `<span class="log-to">${entry.to}</span>: `;
+    html += `${escape(entry.text)}`;
+
+    div.innerHTML = html;
+    container.appendChild(div);
+  });
+}
+
+function escape(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function jumpToBottom() {
+  const container = document.getElementById("log-container");
+  container.scrollTop = container.scrollHeight;
+}
+
+// Task priority queue processor
+function processTaskQueue() {
+  if(state.taskQueue.length === 0) return;
+  const task = state.taskQueue.shift();
+  if(task.type === "user-input") {
+    // User msg: highest priority, agents respond immediately
+    state.agentChatterPaused = true;
+    const agent = state.agents[state.frame % state.agents.length];
+    addLogEntry("user", agent.name, task.text, {
+      pos: { ...agent.pos },
+      domain: agent.domain,
+      action: agent.action,
+    });
+    // Resume after user msg logged
+    state.agentChatterPaused = false;
+  }
+}
+
+// Tick: agents produce chatter (skipped if paused)
+function tick() {
+  state.frame++;
+  document.getElementById("frame").textContent = state.frame;
+
+  // Process high-priority user tasks first
+  processTaskQueue();
+
+  // Skip agent chatter if paused by user input
+  if(state.agentChatterPaused) return;
+
+  // Random agent state change
+  state.agents.forEach(agent => {
+    if(Math.random() < 0.2) {
+      agent.action = ACTIONS[Math.floor(Math.random()*ACTIONS.length)];
+    }
+    if(Math.random() < 0.1) {
+      agent.domain = DOMAINS[Math.floor(Math.random()*DOMAINS.length)];
+    }
+    agent.pos.x = (agent.pos.x + Math.floor(Math.random()*3 - 1)) % 40;
+    agent.pos.y = (agent.pos.y + Math.floor(Math.random()*3 - 1)) % 28;
+  });
+
+  // Agent-to-agent chatter (every ~20 frames)
+  if(state.frame % 20 === 0 && Math.random() < 0.6) {
+    const a = state.agents[Math.floor(Math.random()*state.agents.length)];
+    const b = state.agents.filter(x => x.id !== a.id)[Math.floor(Math.random()*(state.agents.length-1))];
+    const msgs = [
+      `Moving to ${b.domain}`,
+      `Status: ${a.action}`,
+      `At position (${a.pos.x},${a.pos.y})`,
+      `Switching domain`,
+      `Queue depth: ${Math.floor(Math.random()*10)}`,
+    ];
+    const msg = msgs[Math.floor(Math.random()*msgs.length)];
+    addLogEntry(a.name, b.name, msg, {
+      pos: { ...a.pos },
+      domain: a.domain,
+      action: a.action,
+    });
+  }
+}
+
+// Controls
+document.getElementById("send-btn").onclick = function() {
+  const field = document.getElementById("input-field");
+  const text = field.value.trim();
+  if(!text) return;
+
+  // Add user input to priority queue (highest priority)
+  state.taskQueue.unshift({ type: "user-input", text });
+  field.value = "";
+  field.focus();
+};
+
+document.getElementById("input-field").onkeydown = function(e) {
+  if(e.key === "Enter") document.getElementById("send-btn").click();
+};
+
+document.getElementById("toggle-agent-agent").onclick = function() {
+  state.showAgentAgent = !state.showAgentAgent;
+  this.classList.toggle("active", state.showAgentAgent);
+  this.textContent = state.showAgentAgent ? "Hide Agent-Agent" : "Show Agent-Agent";
+  renderLog();
+};
+
+document.getElementById("jump-to-bottom").onclick = jumpToBottom;
+
+// Main loop
+let lastTick = performance.now();
+function loop(now) {
+  if(now - lastTick > 500) { // 0.5s tick
+    tick();
+    lastTick = now;
+  }
+  requestAnimationFrame(loop);
+}
+
+// Init
+loadHistory();
+renderLog();
+document.getElementById("toggle-agent-agent").classList.add("active");
+document.getElementById("input-field").focus();
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
