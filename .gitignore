@@ -27,3 +27,11 @@ AgentBasedModeling.app/
 
 # Node deps for manual generators (reinstall with npm install)
 instruction_manual/generate/node_modules/
+
+# Generated map overview (regenerate with: python3 map/map_generator.py)
+map/map_overview.png
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/

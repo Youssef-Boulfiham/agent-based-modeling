@@ -19,7 +19,7 @@
   timestamp — if the `.app` is not touched, the user sees a stale date and
   thinks the fix never shipped. ALWAYS build until the `.app` is newest.
   (Manual equivalent: `cmake --build build && cp build/AgentBasedModeling ./AgentBasedModeling && touch AgentBasedModeling.app AgentBasedModeling.app/Contents AgentBasedModeling.app/Contents/MacOS`)
-- Run from the project root — asset paths (`data/...`) resolve relative to root.
+- Run from the project root — asset paths (`map/...`, `data/...`) resolve relative to root.
   The `.app` launcher `cd`s to root before running, so double-click works too.
 - The HTML/cpp items under `testcases/` are sandboxes/proving grounds, **not**
   the final product. When the user says "the application" / "the app" / "open
@@ -46,6 +46,11 @@
 
 ## Structure — MANDATORY (do not move/delete)
 
+- **map/** — the world the agents navigate (flat). `mapgen_poc.ipynb` (PoC
+  notebook: how it was figured out), `map_generator.py` (THE generator — run it
+  to make `background.png` + `map_overview.png`), `background.png` (nav layer the
+  grid is extracted from), `enviroment.png` (hand art), `map_overview.png`
+  (generated overview). See `map/README.md`. The app reads `map/...`.
 - **data/** — input/ (config), output/ (results), temp/ (cache), logs/ (history)
 - **testcases/** — by language: cpp/ (native sim), html/ (browser sandboxes), pygame/ (python)
 - **src/** — All .cpp; **src/include/** — All .h

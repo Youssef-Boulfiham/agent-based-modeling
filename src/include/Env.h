@@ -34,18 +34,22 @@ private:
 
     SDL_Rect envArea;
 
-    // Visual layers (loaded lazily on first render).
-    //   background.png  -> behind  (the navigation map / domains)
-    //   enviroment.png  -> on top of background (detailed art)
-    //   agents          -> drawn last
+    // Visual layers (loaded lazily on first render). The three map/*.png:
+    //   background.png   -> the navigation map / domains
+    //   enviroment.png   -> detailed art, drawn on top of background
+    //   map_overview.png -> annotated overview (how the ABM reads the map)
+    //   agents           -> drawn last
     SDL_Texture* bgTexture = nullptr;
     SDL_Texture* envTexture = nullptr;
+    SDL_Texture* overviewTexture = nullptr;
     bool texturesTried = false;
 
-    // Layer view toggle (first top-left button switches it).
-    //   true  -> environment view: background + enviroment art on top
-    //   false -> background view:  background layer only
-    bool showEnvLayer = true;
+    // Layer view (first top-left button cycles through the three map PNGs):
+    //   0 -> enviroment: background + enviroment art on top
+    //   1 -> background:  background layer only
+    //   2 -> overview:    map_overview.png (annotated grid)
+    int layerView = 0;
+    static constexpr int LAYER_COUNT = 3;
     // Path overlay toggle (second top-left button): draw each agent's planned
     // route so you can see where they are going and debug walkable-area issues.
     bool showPaths = false;
@@ -83,8 +87,8 @@ public:
     void renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height);
     void cleanup();
 
-    // Switch between environment layer and background layer.
-    void toggleLayer() { showEnvLayer = !showEnvLayer; }
+    // Cycle the map layer: enviroment -> background -> overview -> ...
+    void toggleLayer() { layerView = (layerView + 1) % LAYER_COUNT; }
 
     // Show/hide agent path overlay.
     void togglePaths() { showPaths = !showPaths; }

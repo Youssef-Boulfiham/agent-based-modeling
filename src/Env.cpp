@@ -3,8 +3,6 @@
 #include <random>
 #include <algorithm>
 #include <iostream>
-#include <fstream>
-#include <sstream>
 #include <cctype>
 
 // Random number generation
@@ -140,30 +138,6 @@ static bool loadMaskFromImage(const std::string& path, int targetCols,
     return cols > 0 && rows > 0;
 }
 
-// Load a domain mask CSV (row-major, values: -1 BLOCKED, 0 CORRIDOR, 1..N domain).
-// Returns true on success; fills out cols/rows and the flat domain vector.
-static bool loadMaskCSV(const std::string& path, int& cols, int& rows,
-                        std::vector<int>& flat) {
-    std::ifstream f(path);
-    if (!f.is_open()) return false;
-    flat.clear();
-    rows = 0;
-    cols = 0;
-    std::string line;
-    while (std::getline(f, line)) {
-        if (line.empty()) continue;
-        std::stringstream ss(line);
-        std::string cell;
-        int c = 0;
-        while (std::getline(ss, cell, ',')) {
-            flat.push_back(std::stoi(cell));
-            ++c;
-        }
-        if (cols == 0) cols = c;
-        ++rows;
-    }
-    return cols > 0 && rows > 0;
-}
 
 // Constructor: Initialize environment with given dimensions
 Env::Env(float w, float h, int maxAgents)
@@ -182,18 +156,17 @@ Env::~Env() {
 // Build the walkable map layer: a corridor grid with four activity zones
 // carved into it. Each zone is a domain region plus a set of stand positions.
 void Env::buildWorld() {
-    // Load the domain mask exported from the input map (data/input -> data/output).
-    // Try a few relative paths so it works regardless of launch cwd.
+    // Extract the walkable grid live from map/background.png so the grid always
+    // matches the map the user sees. Try a few relative paths so it works
+    // regardless of launch cwd.
     int cols = 0, rows = 0;
     std::vector<int> flat;
     bool loaded = false;
 
-    // Preferred: extract the walkable grid live from background.png so the grid
-    // always matches the map the user sees (no stale pre-baked mask).
     const char* imgPaths[] = {
-        "data/input/background.png",
-        "../data/input/background.png",
-        "../../data/input/background.png",
+        "map/background.png",
+        "../map/background.png",
+        "../../map/background.png",
     };
     for (const char* p : imgPaths) {
         if (loadMaskFromImage(p, /*targetCols=*/164, cols, rows, flat)) {
@@ -204,23 +177,8 @@ void Env::buildWorld() {
         }
     }
 
-    // Fallback: the old pre-baked CSV mask.
-    const char* candidates[] = {
-        "data/output/mask_v13_seed1.csv",
-        "../data/output/mask_v13_seed1.csv",
-        "../../data/output/mask_v13_seed1.csv",
-    };
-    for (const char* p : candidates) {
-        if (loaded) break;
-        if (loadMaskCSV(p, cols, rows, flat)) {
-            std::cout << "Loaded mask: " << p << " (" << cols << "x" << rows << ")\n";
-            loaded = true;
-            break;
-        }
-    }
-
     if (!loaded) {
-        std::cerr << "WARNING: mask CSV not found; falling back to empty corridor grid\n";
+        std::cerr << "WARNING: map/background.png not found; falling back to empty corridor grid\n";
         int c = static_cast<int>(width) / 10, r = static_cast<int>(height) / 10;
         grid = WalkGrid(c, r, 10, WalkGrid::CORRIDOR);
         domainList.clear();
@@ -432,7 +390,7 @@ void Env::render() {
 void Env::loadTextures(SDL_Renderer* renderer) {
     texturesTried = true;
     auto tryLoad = [&](const char* name) -> SDL_Texture* {
-        const std::string dirs[] = {"data/input/", "../data/input/", "../../data/input/"};
+        const std::string dirs[] = {"map/", "../map/", "../../map/"};
         for (const auto& d : dirs) {
             std::string path = d + name;
             SDL_Texture* t = IMG_LoadTexture(renderer, path.c_str());
@@ -441,8 +399,9 @@ void Env::loadTextures(SDL_Renderer* renderer) {
         std::cerr << "WARNING: could not load " << name << "\n";
         return nullptr;
     };
-    bgTexture  = tryLoad("background.png");
-    envTexture = tryLoad("enviroment.png");
+    bgTexture       = tryLoad("background.png");
+    envTexture      = tryLoad("enviroment.png");
+    overviewTexture = tryLoad("map_overview.png");  // generated; may be absent
 }
 
 // Render environment view: background.png behind, enviroment.png on top, agents last.
@@ -455,8 +414,13 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
     SDL_SetRenderDrawColor(renderer, 16, 16, 16, 255);
     SDL_RenderFillRect(renderer, &envArea);
 
+    // Overview view: draw the annotated overview alone (no bg/env/agents-art mix).
+    bool overviewView = (layerView == 2 && overviewTexture);
+
     // Layer 1: background.png (navigation map / domains) — stretched to env area.
-    if (bgTexture) {
+    if (overviewView) {
+        SDL_RenderCopy(renderer, overviewTexture, nullptr, &envArea);
+    } else if (bgTexture) {
         SDL_RenderCopy(renderer, bgTexture, nullptr, &envArea);
     } else {
         // Fallback: draw domains from the mask grid.
@@ -482,8 +446,8 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
     }
 
     // Layer 2: enviroment.png (detailed art) on top of the background.
-    // Only in environment view; background view shows the background layer alone.
-    if (showEnvLayer && envTexture) {
+    // Only in enviroment view (0); background (1) and overview (2) skip it.
+    if (layerView == 0 && envTexture) {
         SDL_RenderCopy(renderer, envTexture, nullptr, &envArea);
     }
 
@@ -543,6 +507,7 @@ void Env::cleanup() {
     if (messageLog) { delete messageLog; messageLog = nullptr; }
     if (bgTexture)  { SDL_DestroyTexture(bgTexture);  bgTexture = nullptr; }
     if (envTexture) { SDL_DestroyTexture(envTexture); envTexture = nullptr; }
+    if (overviewTexture) { SDL_DestroyTexture(overviewTexture); overviewTexture = nullptr; }
 }
 
 // Add a new agent to the environment
