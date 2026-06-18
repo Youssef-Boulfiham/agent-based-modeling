@@ -1,9 +1,15 @@
-# Instruction Manual
+# Instruction Manual — Walking Behaviour (VETO)
 
-Eén A4 dat het volledige doel van het loop-/walking-gedrag beschrijft. Geef dit
-A4 door om vanaf nul opnieuw te beginnen — het bevat wat we willen bereiken:
-pathfinding, domeinen=activiteiten, de stepper die logisch kiest, en het pad als
-priority-queue dat je afloopt tot je onderbroken wordt of niets te doen hebt.
+Eén A4 dat het volledige doel van het loop-/walking-gedrag beschrijft. Dit is de
+**bron van waarheid** — alle implementaties (testcases, ABM code) moeten dit exact
+volgen.
+
+**Wijzigingen aan loopgedrag vereisen expliciete toestemming. Vraag eerst voordat
+je iets aanpast.**
+
+Inhoud: pathfinding, domeinen, corridors, de drie activiteiten (idle/working/move
+to domain), en het pad als priority-queue dat je afloopt tot je onderbroken wordt
+of niets te doen hebt.
 
 ## Bestanden
 

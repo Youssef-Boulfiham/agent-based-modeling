@@ -33,3 +33,7 @@ In Claude Code, use the `walking-behaviour` launch config (`.claude/launch.json`
 2. Keep it dependency-free; embed the sim in JS so it runs offline.
 3. Use a deterministic seeded RNG so runs reproduce; add a `reseed` control.
 4. Show pass/fail live in the HUD (e.g. a violation counter).
+
+**Note:** The walking behaviour testcase (`walking_behaviour/`) is locked to the
+specification in `instruction_manual/`. Do not modify walking behaviour without
+explicit permission — ask first.

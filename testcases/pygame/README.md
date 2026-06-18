@@ -24,3 +24,7 @@ language alongside `html/` and `cpp/`.
 cd testcases/pygame/<testcase>
 python3 main.py
 ```
+
+**Note:** The walking behaviour is specified in `instruction_manual/`. Any pygame
+testcase related to walking behaviour must follow that specification exactly. 
+Changes require explicit permission — ask first.

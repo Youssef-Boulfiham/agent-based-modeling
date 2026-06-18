@@ -79,4 +79,6 @@ komen voor.
 - Routing tussen domeinen **via de gang** (BFS/A* over begaanbare cellen).
 - Drie activiteiten idle / working / move to domain als loop-state.
 
-Specificatie staat in `instruction_manual/`.
+**Specificatie staat in `instruction_manual/Agent_Walking_Pathfinding_Manual.docx`.**
+Dit is de bron van waarheid. Wijzigingen aan loopgedrag vereisen expliciete toestemming
+— vraag eerst voordat je dit aanpast.

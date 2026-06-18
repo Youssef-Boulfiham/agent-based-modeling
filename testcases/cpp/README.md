@@ -8,6 +8,10 @@ core logic close to `src/`.
 
 Current testcase: **sandbox.cpp** — minimal proof-of-concept simulator.
 
+**Note:** The walking behaviour is specified in `instruction_manual/`. The C++
+implementation in `src/Agent.cpp` must follow that specification exactly. Any
+changes to walking behaviour require explicit permission — ask first.
+
 ## Purpose
 
 - **Proof-of-concept testing** — Validate ideas before main integration

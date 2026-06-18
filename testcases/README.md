@@ -55,5 +55,8 @@ See `cpp/README.md`.
 ## Integration with main code
 
 Testcases are decoupled from the main app but exercise the same ideas. Validated
-behaviour migrates into `src/` (e.g. `src/Agent.cpp`). The walking behaviour is
-specified in `instruction_manual/` — that 1-A4 is the source of truth.
+behaviour migrates into `src/` (e.g. `src/Agent.cpp`).
+
+**The walking behaviour is specified in `instruction_manual/Agent_Walking_Pathfinding_Manual.docx` —
+that is the source of truth.** All implementations must follow it exactly. Any changes
+to walking behaviour require explicit permission before implementation.

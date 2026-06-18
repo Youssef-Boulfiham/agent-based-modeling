@@ -57,19 +57,17 @@ const doc = new Document({
       new Paragraph({ heading: HeadingLevel.HEADING_1,
         children: [new TextRun("Agent Walking & Pathfinding — Instruction Manual")] }),
       new Paragraph({ spacing: { after: 120 }, children: [new TextRun({
-        text: "Hoe een agent rationeel door de wereld beweegt. Dit één A4 beschrijft het volledige doel; geef het door om vanaf nul opnieuw te beginnen.",
+        text: "Hoe een agent rationeel door de wereld beweegt. Dit een A4 beschrijft het volledige doel; geef het door om vanaf nul opnieuw te beginnen.",
         italics: true, size: 18, color: "555555" })] }),
 
-      // 1. Doel
-      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("1. Doel in één zin")] }),
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("1. Doel in een zin")] }),
       new Paragraph({ spacing: { after: 60 }, children: [new TextRun(
-        "Een externe functie bepaalt in welk domein de agent moet zijn. Elke step checkt de agent dat: is hij er nog niet, dan loopt hij via de gang naar dat domein (kortste pad als priority-queue, één cel per stap); is hij er wel, dan loopt hij wat rond (idle) of staat hij stil (working).")] }),
+        "Een externe functie bepaalt in welk domein de agent moet zijn. Elke step checkt de agent dat: is hij er nog niet, dan loopt hij via de gang naar dat domein (kortste pad als priority-queue, een cel per stap); is hij er wel, dan loopt hij wat rond (idle) of staat hij stil (working).")] }),
 
-      // 2. Kernconcepten
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("2. Kernconcepten")] }),
       ...bulletRich([
         { text: "Domein stuurt het loopgedrag: ", bold: true },
-        { text: "de ruimte waar de agent moet zijn. Wordt EXTERN gezet (andere module) en verandert zelden — minimaal elke 50 steps. De agent checkt elke step welk domein hij moet zijn; hij verandert dit zelf nooit." },
+        { text: "de ruimte waar de agent moet zijn. Wordt EXTERN gezet (andere module). De agent checkt elke step welk domein hij moet zijn — het doel kan elke stap veranderen. Geen minimale stabiliteit; dat is testcase-specifiek voor controleerbaarheid." },
       ]),
       ...bulletRich([
         { text: "Gang verbindt domeinen: ", bold: true },
@@ -79,38 +77,35 @@ const doc = new Document({
         { text: "Activiteit (3 soorten): ", bold: true },
         { text: "idle = niks te doen, loopt wat rond in zijn kamer; working = blijft staan waar hij is; move to domain = nog onderweg via de gang naar het doel-domein." },
       ]),
-      ...bullet("Pad = priority-queue: het hele pad van huidige cel naar doel wordt vooraf berekend als een wachtrij van cellen (front = volgende stap). De agent pakt elke step één cel van de voorkant."),
+      ...bullet("Pad = priority-queue: het hele pad van huidige cel naar doel wordt vooraf berekend als een wachtrij van cellen (front = volgende stap). De agent pakt elke step een cel van de voorkant."),
 
-      // 3. Pathfinding regels
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("3. Pathfinding — harde regels")] }),
-      ...numbered("Eén stap per step: elke beweging gaat naar een buurcel. Chebyshev-afstand tot de vorige cel is altijd ≤ 1. De agent mag NOOIT springen van het ene punt op de map naar het andere."),
+      ...numbered("Een stap per step: elke beweging gaat naar een buurcel. Chebyshev-afstand tot de vorige cel is altijd <= 1. De agent mag NOOIT springen van het ene punt op de map naar het andere."),
       ...numbered("Kortste route via de gang: het pad over begaanbare cellen is minimaal. Naar een ander domein loopt de agent door de gang, niet dwars door muren."),
       ...numbered("Vloeiend & volgbaar: opeenvolgende posities vormen een aaneengesloten lijn, zodat het gedrag voor een kijker rationeel en te volgen is."),
       ...numbered("Domein-check elke step: het doel-domein kan extern veranderd zijn. Zo ja, herplan en loop via de gang naar het nieuwe domein; zo nee, idle/working binnen het huidige domein."),
 
-      // 4. Tick-loop
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("4. De step-loop")] }),
       new Table({
         width: { size: 9746, type: WidthType.DXA },
         columnWidths: [2450, 7296],
         rows: [
           new TableRow({ tableHeader: true, children: [headerCell("Toestand", 2450), headerCell("Wat de agent doet", 7296)] }),
-          new TableRow({ children: [bodyCell("check domein", 2450, true), bodyCell("Elke step: zit ik in het doel-domein? Het doel komt van buiten en is ≥ 50 steps stabiel.", 7296)] }),
-          new TableRow({ children: [bodyCell("move to domain", 2450, true), bodyCell("Niet in doel-domein → plan/vervolg BFS-pad via de gang, loop één cel. Bij aankomst → idle of working.", 7296)] }),
-          new TableRow({ children: [bodyCell("idle", 2450, true), bodyCell("In doel-domein, niks te doen → loop wat rond in de kamer (één cel per step).", 7296)] }),
-          new TableRow({ children: [bodyCell("working", 2450, true), bodyCell("In doel-domein → blijf staan waar je bent (geen beweging).", 7296)] }),
+          new TableRow({ children: [bodyCell("check domein", 2450, true), bodyCell("Elke step: zit ik in het doel-domein? Het doel komt van buiten; kan elke step veranderen.", 7296)] }),
+          new TableRow({ children: [bodyCell("move to domain", 2450, true), bodyCell("Niet in doel-domein -> plan/vervolg BFS-pad via de gang, loop een cel. Bij aankomst -> idle of working.", 7296)] }),
+          new TableRow({ children: [bodyCell("idle", 2450, true), bodyCell("In doel-domein, niks te doen -> loop wat rond in de kamer (een cel per step).", 7296)] }),
+          new TableRow({ children: [bodyCell("working", 2450, true), bodyCell("In doel-domein -> blijf staan waar je bent (geen beweging).", 7296)] }),
         ],
       }),
 
-      // 5. Acceptatiecriteria
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("5. Klaar wanneer")] }),
-      ...bullet("Elke beweging heeft stap-afstand 1 (nul “jumps” over de hele run)."),
+      ...bullet("Elke beweging heeft stap-afstand 1 (nul jumps over de hele run)."),
       ...bullet("Reizen tussen domeinen lopen via de gang (kortste begaanbare route, niet door muren)."),
-      ...bullet("Doel-domein wordt alleen extern gezet, is ≥ 50 steps stabiel, en wordt elke step gecheckt."),
+      ...bullet("Doel-domein wordt alleen extern gezet en wordt elke step gecheckt."),
       ...bullet("De drie activiteiten idle / working / move to domain gedragen zich correct."),
 
       new Paragraph({ spacing: { before: 140 }, border: { top: { style: BorderStyle.SINGLE, size: 6, color: ACCENT, space: 6 } },
-        children: [new TextRun({ text: "Referentie-implementatie: testcases/html/walking_behaviour/index.html. Gevalideerd: 0 jumps, alle reizen via de gang, doel-domein ≥ 50 steps.",
+        children: [new TextRun({ text: "Referentie-implementatie: testcases/html/walking_behaviour/index.html. Gevalideerd: 0 jumps, alle reizen via de gang.",
           size: 17, italics: true, color: "555555" })] }),
     ],
   }],
