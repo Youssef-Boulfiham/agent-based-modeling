@@ -21,3 +21,6 @@ data/logs/
 
 # App bundle
 AgentBasedModeling.app/
+
+# Root final-product binary (rebuilt locally; not tracked)
+/AgentBasedModeling
