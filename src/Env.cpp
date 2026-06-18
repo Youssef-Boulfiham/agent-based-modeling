@@ -82,7 +82,10 @@ static bool loadMaskFromImage(const std::string& path, int targetCols,
     //    The hallways are thin tan lines; without thickening they fragment when
     //    downsampled to the grid and domains become unreachable. R chosen so the
     //    two connectors per domain survive gridding (validated: all 8 reachable).
-    const int R = 6;
+    //    Scaled with background.png SCALE (16->48): R=18 keeps the dilation reach
+    //    at 0.375 logical cells, so the extracted grid is byte-identical to the
+    //    old 16px/R=6 render (verified: 0 differing cells).
+    const int R = 18;
     auto dilate = [&](std::vector<Uint8>& src) {
         std::vector<Uint8> tmp(src.size(), 0);
         for (int y = 0; y < H; ++y)                 // horizontal pass
@@ -169,7 +172,7 @@ void Env::buildWorld() {
         "../../map/background.png",
     };
     for (const char* p : imgPaths) {
-        if (loadMaskFromImage(p, /*targetCols=*/164, cols, rows, flat)) {
+        if (loadMaskFromImage(p, /*targetCols=*/176, cols, rows, flat)) {
             std::cout << "Extracted mask from image: " << p
                       << " (" << cols << "x" << rows << ")\n";
             loaded = true;

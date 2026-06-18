@@ -43,7 +43,7 @@ NAMES = {0: "corridor", 1: "purple", 2: "slate", 3: "gold",
          4: "blue", 5: "pink", 6: "teal", 7: "orange"}
 CORRIDOR_RGB = (204, 193, 173)
 VOID_RGB = (17, 15, 12)
-SCALE = 16   # px per map cell in background.png
+SCALE = 48   # px per map cell in background.png (higher = sharper on zoom-in)
 
 
 # ── Generator (proven layout from the PoC) ───────────────────────────────────
@@ -225,14 +225,15 @@ def write_background(m):
     colormap = {0: CORRIDOR_RGB}
     for _t, (i, c) in APP.items():
         colormap[i] = c
-    img = Image.new("RGB", (MAP_W * SCALE, MAP_H * SCALE))
-    px = img.load()
+    # Render at logical resolution, then upscale with NEAREST: every cell stays a
+    # flat hard-edged block (no interpolation blur) at SCALE x the source pixels.
+    base = Image.new("RGB", (MAP_W, MAP_H))
+    bpx = base.load()
     for y in range(MAP_H):
         for x in range(MAP_W):
-            v = idg[y][x]; col = VOID_RGB if v < 0 else colormap[v]
-            for yy in range(y * SCALE, y * SCALE + SCALE):
-                for xx in range(x * SCALE, x * SCALE + SCALE):
-                    px[xx, yy] = col
+            v = idg[y][x]
+            bpx[x, y] = VOID_RGB if v < 0 else colormap[v]
+    img = base.resize((MAP_W * SCALE, MAP_H * SCALE), Image.NEAREST)
     img.save(BG_OUT)
 
 
@@ -244,9 +245,12 @@ for _t, (_i, _c) in APP.items():
 PALETTE = {i: (NAMES[i], _APP_BY_ID[i]) for i in range(8)}
 BLOCKED = -1
 MATCH_MAX_SQ = 60 * 60
-TARGET_COLS = 164
-DILATE_PX = 6
-CELL = 24
+# Scaled with SCALE (16->48, 3x) so the extracted grid is byte-identical to the
+# old 16px render: cell stays 0.625 logical cells, dilation stays 0.375 logical
+# cells. Must match src/Env.cpp loadMaskFromImage (targetCols=176, R=18).
+TARGET_COLS = 176
+DILATE_PX = 18
+CELL = 48   # px per grid cell in map_overview.png (higher = sharper text/lines)
 
 
 def _classify(r, g, b):
