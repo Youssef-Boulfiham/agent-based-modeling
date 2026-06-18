@@ -23,7 +23,7 @@ static const T& randChoice(const std::vector<T>& v) {
 }
 
 Agent::Agent(int id, glm::vec2 startPos, Env* env)
-    : id(id), position(startPos), world(env) {
+    : id(id), position(startPos), targetDomain(-1), assignedActivity("idle"), world(env) {
     // Start in random activity with random valid position
     if (world) {
         const auto& names = world->getActivityNames();
@@ -32,6 +32,8 @@ Agent::Agent(int id, glm::vec2 startPos, Env* env)
             const Activity* act = world->findActivity(activity);
             if (act && !act->positions.empty()) {
                 positionCurrent = randChoice(act->positions);
+                targetDomain = act->domain;
+                assignedActivity = activity;
             }
         }
     }
@@ -44,19 +46,51 @@ Agent::~Agent() {}
 void Agent::step(float /*deltaTime*/) {
     if (!world) return;
 
-    // Follow queued path one waypoint per frame
+    // Walking behavior: domain-driven with corridor routing
+    int currentRoom = world->roomOf(positionCurrent);
+
+    // Check: am I in the target domain?
+    if (currentRoom != targetDomain) {
+        // NOT in target domain -> move_to_domain: route via corridor to domain center
+        activity = "move to domain";
+        if (path.empty()) {
+            routeToDomain(targetDomain);
+        }
+        // Move one cell toward goal
+        if (!path.empty()) {
+            positionCurrent = path.front();
+            path.erase(path.begin());
+            position = positionCurrent;
+
+            // Check if just arrived in target domain
+            if (world->roomOf(positionCurrent) == targetDomain) {
+                path.clear();
+                // Find an activity in this domain
+                assignedActivity = world->findActivityInDomain(targetDomain);
+                if (assignedActivity.empty()) {
+                    assignedActivity = "idle"; // Fallback
+                }
+            }
+        }
+        return;
+    }
+
+    // In target domain -> execute assigned activity
+    activity = assignedActivity;
+    if (activity == "working") {
+        // Stay put
+        path.clear();
+        return;
+    }
+
+    // idle: wander within current domain
+    if (path.empty()) {
+        path = bfs(positionCurrent, pickPosition());
+    }
     if (!path.empty()) {
         positionCurrent = path.front();
         path.erase(path.begin());
         position = positionCurrent;
-        return;
-    }
-
-    // Path drained: decide next action (~10% commit, else idle)
-    if (uniform01() < 0.10f) {
-        chooseActivity();
-    } else {
-        idle();
     }
 }
 
@@ -160,4 +194,32 @@ void Agent::routeTo(glm::vec2 goal) {
     } else {
         path.assign(randInt(5, 15), positionCurrent);
     }
+}
+
+void Agent::routeToDomain(int domain) {
+    glm::vec2 goal = world->domainCenter(domain);
+    const WalkGrid& grid = world->getWalkGrid();
+    // Allow corridor + target domain
+    std::vector<int> allowed = {domain};
+    Path p = Pathfinding::findPath(positionCurrent, goal, grid, allowed);
+    if (p.found) {
+        path.insert(path.end(), p.waypoints.begin(), p.waypoints.end());
+    } else {
+        // Fallback: stay put or wander locally
+        path.clear();
+    }
+}
+
+// BFS path within current domain, for idle wandering
+std::vector<glm::vec2> Agent::bfs(glm::vec2 start, glm::vec2 goal) const {
+    if (!world) return {};
+
+    const WalkGrid& grid = world->getWalkGrid();
+    int currentDomain = world->roomOf(start);
+
+    // Allow corridor + current domain
+    std::vector<int> allowed = {currentDomain};
+    Path p = Pathfinding::findPath(start, goal, grid, allowed);
+
+    return p.found ? p.waypoints : std::vector<glm::vec2>();
 }

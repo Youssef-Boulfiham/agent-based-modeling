@@ -34,6 +34,12 @@ private:
 
     void buildWorld();
 
+    // External domain controller: per spec, target domain is set externally and
+    // re-checked each step. Reassigns each agent a new target domain at intervals.
+    void controlAgentDomains();
+    std::vector<int> domainList;            // domains available for assignment
+    std::unordered_map<int, int> nextChangeAt; // agentId -> frame of next domain change
+
 public:
     Env(float w, float h, int maxAgents);
     ~Env();
@@ -63,6 +69,16 @@ public:
         activities[name] = Activity{domain, probability, std::move(positions)};
         activityNames.push_back(name);
     }
+
+    // Walking behavior helper: determine which domain a world position is in
+    // Returns the domain id, or WalkGrid::CORRIDOR (-1 or 0) if not in any activity domain
+    int roomOf(glm::vec2 worldPos) const;
+
+    // Walking behavior helper: find center of domain
+    glm::vec2 domainCenter(int domain) const;
+
+    // Walking behavior helper: find an activity name in the given domain
+    std::string findActivityInDomain(int domain) const;
 
     float getWidth() const { return width; }
     float getHeight() const { return height; }

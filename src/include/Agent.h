@@ -20,6 +20,10 @@ protected:
     glm::vec2 positionCurrent;             // last cell stood on
     std::vector<int> connections;          // ids of connected agents
 
+    // Walking behavior (domain-driven)
+    int targetDomain;                      // where agent MUST be (externally set)
+    std::string assignedActivity;          // idle or working (assigned when reaching domain)
+
     // Shared world context (passed at construction, read-only)
     class Env* world;
 
@@ -35,9 +39,11 @@ public:
     const std::string& getActivity() const { return activity; }
     const std::string& getStatus() const { return status; }
     bool isBusy() const { return !path.empty(); }
+    int getTargetDomain() const { return targetDomain; }
 
     // Setters
     void setPosition(glm::vec2 pos) { position = pos; }
+    void setTargetDomain(int domain) { targetDomain = domain; }
     void connect(int otherId) { connections.push_back(otherId); }
 
     // Behavior primitives
@@ -48,6 +54,8 @@ public:
 private:
     glm::vec2 pickPosition() const;
     void routeTo(glm::vec2 goal);
+    void routeToDomain(int domain);
+    std::vector<glm::vec2> bfs(glm::vec2 start, glm::vec2 goal) const;
     std::vector<int> allowedDomains() const;
 };
 

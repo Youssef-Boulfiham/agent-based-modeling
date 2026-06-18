@@ -2,9 +2,36 @@
 #include <random>
 #include <algorithm>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 // Random number generation
 static std::mt19937 rng(std::random_device{}());
+
+// Load a domain mask CSV (row-major, values: -1 BLOCKED, 0 CORRIDOR, 1..N domain).
+// Returns true on success; fills out cols/rows and the flat domain vector.
+static bool loadMaskCSV(const std::string& path, int& cols, int& rows,
+                        std::vector<int>& flat) {
+    std::ifstream f(path);
+    if (!f.is_open()) return false;
+    flat.clear();
+    rows = 0;
+    cols = 0;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string cell;
+        int c = 0;
+        while (std::getline(ss, cell, ',')) {
+            flat.push_back(std::stoi(cell));
+            ++c;
+        }
+        if (cols == 0) cols = c;
+        ++rows;
+    }
+    return cols > 0 && rows > 0;
+}
 
 // Constructor: Initialize environment with given dimensions
 Env::Env(float w, float h, int maxAgents)
@@ -22,37 +49,65 @@ Env::~Env() {
 // Build the walkable map layer: a corridor grid with four activity zones
 // carved into it. Each zone is a domain region plus a set of stand positions.
 void Env::buildWorld() {
-    const int cell = 10;
-    int cols = static_cast<int>(width) / cell;
-    int rows = static_cast<int>(height) / cell;
-    grid = WalkGrid(cols, rows, cell, WalkGrid::CORRIDOR);
-
-    // Activity domains (must be != CORRIDOR/BLOCKED).
-    enum Domain { ALFA = 1, BRAVO = 2, CHARLIE = 3 };
-
-    // Paint a rectangular zone [cx0,cx1) x [cy0,cy1) and collect stand points.
-    auto paint = [&](int cx0, int cy0, int cx1, int cy1, int domain,
-                     std::vector<glm::vec2>& out) {
-        for (int y = cy0; y < cy1; ++y)
-            for (int x = cx0; x < cx1; ++x) {
-                glm::ivec2 c(x, y);
-                grid.setDomain(c, domain);
-                // sample every 2nd cell as a valid stand position
-                if (x % 2 == 0 && y % 2 == 0)
-                    out.push_back(grid.toWorld(c));
-            }
+    // Load the domain mask exported from the input map (data/input -> data/output).
+    // Try a few relative paths so it works regardless of launch cwd.
+    const char* candidates[] = {
+        "data/output/mask_v13_seed1.csv",
+        "../data/output/mask_v13_seed1.csv",
+        "../../data/output/mask_v13_seed1.csv",
     };
 
-    std::vector<glm::vec2> idle, working, learning;
-    int mx = cols / 2, my = rows / 2;     // map midpoints
-    paint(0,      0,      mx - 2, my - 2, ALFA,    idle);     // top-left
-    paint(mx + 2, 0,      cols,   my - 2, BRAVO,   working);  // top-right
-    paint(0,      my + 2, mx - 2, rows,   CHARLIE, learning); // bottom-left
-    // the 2-cell gap between zones stays CORRIDOR -> shared, always walkable
+    int cols = 0, rows = 0;
+    std::vector<int> flat;
+    bool loaded = false;
+    for (const char* p : candidates) {
+        if (loadMaskCSV(p, cols, rows, flat)) {
+            std::cout << "Loaded mask: " << p << " (" << cols << "x" << rows << ")\n";
+            loaded = true;
+            break;
+        }
+    }
 
-    addActivity("idle",     ALFA,    0.30f, std::move(idle));
-    addActivity("working",  BRAVO,   0.35f, std::move(working));
-    addActivity("learning", CHARLIE, 0.35f, std::move(learning));
+    if (!loaded) {
+        std::cerr << "WARNING: mask CSV not found; falling back to empty corridor grid\n";
+        int c = static_cast<int>(width) / 10, r = static_cast<int>(height) / 10;
+        grid = WalkGrid(c, r, 10, WalkGrid::CORRIDOR);
+        domainList.clear();
+        return;
+    }
+
+    // Fit the mask grid into the world rectangle (cellSize chosen from world size).
+    int cell = std::max(1, std::min(static_cast<int>(width) / cols,
+                                    static_cast<int>(height) / rows));
+    grid = WalkGrid(cols, rows, cell, WalkGrid::CORRIDOR);
+
+    // Copy mask values into the grid and collect stand positions per domain.
+    std::unordered_map<int, std::vector<glm::vec2>> positionsByDomain;
+    int maxDomain = 0;
+    for (int y = 0; y < rows; ++y) {
+        for (int x = 0; x < cols; ++x) {
+            int v = flat[y * cols + x];
+            glm::ivec2 c(x, y);
+            grid.setDomain(c, v);
+            if (v > 0) {
+                maxDomain = std::max(maxDomain, v);
+                // sample every 3rd cell as a valid stand position
+                if (x % 3 == 0 && y % 3 == 0)
+                    positionsByDomain[v].push_back(grid.toWorld(c));
+            }
+        }
+    }
+
+    // Register one activity per domain (loop behaviour treats activity as separate;
+    // here each domain gets a neutral activity name so agents have stand positions).
+    domainList.clear();
+    for (int d = 1; d <= maxDomain; ++d) {
+        auto& pos = positionsByDomain[d];
+        if (pos.empty()) continue;
+        std::string name = "domain_" + std::to_string(d);
+        addActivity(name, d, 1.0f / maxDomain, std::move(pos));
+        domainList.push_back(d);
+    }
 }
 
 // Initialize the environment and spawn initial agents
@@ -74,9 +129,33 @@ void Env::initialize() {
 void Env::step() {
     if (!isRunning) return;
 
+    controlAgentDomains();   // external controller: assign target domains
     updateAgents();
     activeAgents = agents.size();
     frameCount++;
+}
+
+// External domain controller (mirrors testcase externalDomainController).
+// Per spec, the target domain is set EXTERNALLY (not by the agent). Each agent
+// gets a new random target domain at least every 50 steps. The agent only
+// reacts — it never chooses its own target.
+void Env::controlAgentDomains() {
+    if (domainList.empty()) return;
+
+    static std::uniform_int_distribution<int> jitter(0, 39);
+    std::uniform_int_distribution<int> pick(0, static_cast<int>(domainList.size()) - 1);
+
+    for (Agent* agent : agents) {
+        int aid = agent->getId();
+        auto it = nextChangeAt.find(aid);
+        if (it == nextChangeAt.end() || frameCount >= it->second) {
+            int current = agent->getTargetDomain();
+            int next;
+            do { next = domainList[pick(rng)]; } while (next == current && domainList.size() > 1);
+            agent->setTargetDomain(next);
+            nextChangeAt[aid] = frameCount + 50 + jitter(rng);
+        }
+    }
 }
 
 // Update physics and behavior for all agents
@@ -99,21 +178,63 @@ void Env::render() {
 void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height) {
     envArea = {x, y, width, height};
 
-    SDL_SetRenderDrawColor(renderer, 40, 40, 50, 255);
+    // Background (walls / void)
+    SDL_SetRenderDrawColor(renderer, 16, 16, 16, 255);
     SDL_RenderFillRect(renderer, &envArea);
+
+    // Map drawn from the loaded mask grid, scaled to fill the env area.
+    // Domain colours mirror data/output/mask_v13_seed1.json.
+    static const int domainRGB[8][3] = {
+        {204, 193, 173},  // 0 corridor
+        {176, 127, 201},  // 1
+        {122, 138, 160},  // 2
+        {201, 161,  75},  // 3
+        { 91, 143, 201},  // 4
+        {201,  96, 142},  // 5
+        {108, 192, 168},  // 6
+        {201, 138,  75},  // 7
+    };
+
+    const int gcols = grid.cols, grows = grid.rows;
+    if (gcols > 0 && grows > 0) {
+        float cw = static_cast<float>(width) / gcols;
+        float ch = static_cast<float>(height) / grows;
+        for (int gy = 0; gy < grows; ++gy) {
+            for (int gx = 0; gx < gcols; ++gx) {
+                int d = grid.domainAt({gx, gy});
+                if (d == WalkGrid::BLOCKED) continue;          // leave as void
+                const int* rgb = domainRGB[(d >= 0 && d <= 7) ? d : 0];
+                SDL_SetRenderDrawColor(renderer, rgb[0], rgb[1], rgb[2], 255);
+                SDL_Rect cellRect = {
+                    x + static_cast<int>(gx * cw),
+                    y + static_cast<int>(gy * ch),
+                    static_cast<int>(cw + 1.0f),
+                    static_cast<int>(ch + 1.0f)
+                };
+                SDL_RenderFillRect(renderer, &cellRect);
+            }
+        }
+    }
+
+    // Border
     SDL_SetRenderDrawColor(renderer, 100, 100, 150, 255);
     SDL_RenderDrawRect(renderer, &envArea);
 
-    float scaleX = static_cast<float>(width) / 800.0f;
-    float scaleY = static_cast<float>(height) / 600.0f;
+    // Agents: scale world coords (grid pixel space) into the env area.
+    float worldW = static_cast<float>(gcols * grid.cellSize);
+    float worldH = static_cast<float>(grows * grid.cellSize);
+    if (worldW <= 0) worldW = 800.0f;
+    if (worldH <= 0) worldH = 600.0f;
+    float scaleX = static_cast<float>(width) / worldW;
+    float scaleY = static_cast<float>(height) / worldH;
 
     for (const Agent* agent : agents) {
         glm::vec2 pos = agent->getPosition();
         int agentX = x + static_cast<int>(pos.x * scaleX);
         int agentY = y + static_cast<int>(pos.y * scaleY);
-        int radius = 6;
+        int radius = 5;
 
-        SDL_SetRenderDrawColor(renderer, 100, 200, 255, 255);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         for (int i = -radius; i <= radius; ++i) {
             for (int j = -radius; j <= radius; ++j) {
                 if (i*i + j*j <= radius*radius) {
@@ -157,5 +278,39 @@ void Env::updateAgents() {
     for (Agent* agent : agents) {
         agent->step(deltaTime);
     }
+}
+
+// Determine which domain a world position is in
+// Returns domain id of the activity that owns this position, or WalkGrid::CORRIDOR if in corridor
+int Env::roomOf(glm::vec2 worldPos) const {
+    glm::ivec2 gridPos = grid.toGrid(worldPos);
+    if (!grid.inBounds(gridPos)) return WalkGrid::BLOCKED;
+    return grid.domainAt(gridPos);
+}
+
+// Find center of a domain by averaging all positions of activities in that domain
+glm::vec2 Env::domainCenter(int domain) const {
+    float sumX = 0.0f, sumY = 0.0f;
+    int count = 0;
+    for (const auto& pair : activities) {
+        if (pair.second.domain == domain) {
+            for (const auto& pos : pair.second.positions) {
+                sumX += pos.x;
+                sumY += pos.y;
+                count++;
+            }
+        }
+    }
+    if (count == 0) return glm::vec2(0, 0);
+    return glm::vec2(sumX / count, sumY / count);
+}
+
+// Find an activity that belongs to the given domain
+std::string Env::findActivityInDomain(int domain) const {
+    for (const auto& name : activityNames) {
+        const auto& act = activities.at(name);
+        if (act.domain == domain) return name;
+    }
+    return ""; // No activity in domain
 }
 
