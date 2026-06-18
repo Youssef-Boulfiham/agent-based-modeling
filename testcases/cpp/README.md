@@ -1,8 +1,12 @@
-# Sandbox Mode
+# C++ Sandboxes
 
-Lightweight testing environment for ABM concepts — stripped-down C++ simulation with zero external dependencies.
+Native C++ testcases — stripped-down simulations with zero external dependencies
+(no SDL/GLM, stdlib only). Use this folder when you need native performance or
+core logic close to `src/`.
 
 **Before modifying sandbox code, read this file.**
+
+Current testcase: **sandbox.cpp** — minimal proof-of-concept simulator.
 
 ## Purpose
 
@@ -32,7 +36,7 @@ For UI & integration tests, use full app or create specialized test suites in `t
 ## Structure
 
 ```
-sandbox/
+cpp/
 ├── README.md              # This file
 ├── sandbox.cpp            # Standalone simulation engine (~280 lines)
 ├── build.sh               # Compilation script
@@ -45,7 +49,7 @@ sandbox/
 ## Building
 
 ```bash
-cd testcases/sandbox
+cd testcases/cpp
 ./build.sh
 ```
 
@@ -58,7 +62,7 @@ cd testcases/sandbox
 ## Running
 
 ```bash
-cd testcases/sandbox/build
+cd testcases/cpp/build
 ./sandbox
 ```
 

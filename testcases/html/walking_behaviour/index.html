@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="nl"><head><meta charset="utf-8">
+<title>Walking behaviour — domein-gestuurd looppad via gangen</title>
+<style>
+  body{margin:0;background:#14141a;color:#e8e4dc;font:14px system-ui,sans-serif;
+       display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px}
+  canvas{background:#0e0e13;border:1px solid #333;border-radius:6px;max-width:100%}
+  #hud{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:center}
+  .pill{background:#23232c;padding:4px 10px;border-radius:12px}
+  button{background:#2d6cdf;color:#fff;border:0;padding:6px 12px;border-radius:6px;cursor:pointer}
+  button:hover{background:#3b78e8}
+  #legend{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  .lg{display:flex;align-items:center;gap:5px}.sw{width:12px;height:12px;border-radius:3px}
+  b{color:#fff} h3{margin:4px} .sub{color:#888;margin:0 0 4px;font-size:13px;text-align:center;max-width:760px}
+</style></head><body>
+<h3>Walking behaviour — domein-gestuurd looppad via gangen</h3>
+<p class="sub">Een externe functie bepaalt in welk domein de agent moet zijn (wijzigt minimaal elke 50 steps). Elke step checkt de agent dat. Klopt het niet, dan loopt hij via de gang naar het juiste domein; klopt het wel, dan idle (rondlopen) of working (stilstaan).</p>
+<div id="hud">
+  <span class="pill">frame <b id="frame">0</b></span>
+  <span class="pill">moet in <b id="target">—</b></span>
+  <span class="pill">nu in <b id="at">—</b></span>
+  <span class="pill">activiteit <b id="act">—</b></span>
+  <span class="pill">queue <b id="q">0</b></span>
+  <span class="pill">stap &#916; <b id="delta">0</b></span>
+  <span class="pill">since <b id="since">0</b></span>
+  <span class="pill">violations <b id="viol">0</b></span>
+  <button id="toggle">pause</button>
+  <button id="speed">speed x1</button>
+  <button id="reseed">reseed</button>
+  <button id="restart">restart</button>
+</div>
+<div id="legend"></div>
+<canvas id="cv" width="800" height="560"></canvas>
+
+<script>
+// ============================================================================
+// Walking behaviour testcase (pure HTML/JS — sim + visualisatie in één).
+//
+// CONCEPT (zie instruction_manual):
+//   - DOMEIN = de ruimte waar de agent MOET zijn. Wordt door een EXTERNE functie
+//     gezet (hier: setTargetDomain) en verandert minimaal elke 50 steps. De agent
+//     checkt elke step "in welk domein moet ik zijn?".
+//   - GANG = corridors verbinden de domeinen. Naar een ander domein loopt de
+//     agent ALTIJD via de gang (muren blokkeren; pad = BFS over begaanbare cellen).
+//   - ACTIVITEIT = wat de agent nu doet. Drie soorten:
+//       idle           -> niks te doen, loopt wat rond in zijn kamer.
+//       working        -> blijft staan waar hij is.
+//       move to domain -> nog onderweg naar het domein waar hij moet zijn.
+//
+// LOOPREGELS (hard):
+//   1. Pad is een priority-queue van cellen; agent loopt 1 cel per step.
+//   2. Elke stap hoogstens 1 cel ver (Chebyshev <= 1). Nooit springen.
+//   3. Kortste route over begaanbare cellen (rooms + gangen), via de gang.
+//   4. Domein-check elke step: verandert het doel, dan loopt hij er via de gang
+//      naartoe; anders idle/working binnen het huidige domein.
+// ============================================================================
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+const GRID = { w: 40, h: 28 };
+
+// Domeinen (kamers). Neutraal benoemd — loopgedrag kent geen activiteit-namen.
+const DOMAINS = [
+  { name: "Domein A", x0: 2,  y0: 2,  x1: 10, y1: 7,  color: "#e0a23a" },
+  { name: "Domein B", x0: 29, y0: 2,  x1: 37, y1: 7,  color: "#4caf7d" },
+  { name: "Domein C", x0: 2,  y0: 20, x1: 10, y1: 25, color: "#7b6cf0" },
+  { name: "Domein D", x0: 29, y0: 20, x1: 37, y1: 25, color: "#e05a8a" },
+];
+
+// Begaanbare cellen: kamers + gangen. Alles daarbuiten = muur.
+const walk = Array.from({length: GRID.h}, () => new Array(GRID.w).fill(false));
+function fill(x0,y0,x1,y1){ for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) if(y>=0&&y<GRID.h&&x>=0&&x<GRID.w) walk[y][x]=true; }
+DOMAINS.forEach(d => fill(d.x0,d.y0,d.x1,d.y1));
+// Gangen: linker verticaal (A<->C), rechter verticaal (B<->D), midden horizontaal.
+fill(5,7,6,20);    // linker gang
+fill(33,7,34,20);  // rechter gang
+fill(5,13,34,14);  // middengang verbindt links<->rechts
+
+const inDomain = (p,d) => p.x>=d.x0&&p.x<=d.x1&&p.y>=d.y0&&p.y<=d.y1;
+const roomOf = p => DOMAINS.findIndex(d => inDomain(p,d)); // -1 = in de gang
+const center = d => ({ x: (d.x0+d.x1)>>1, y: (d.y0+d.y1)>>1 });
+const cheb = (a,b) => Math.max(Math.abs(a.x-b.x), Math.abs(a.y-b.y));
+const walkable = (x,y) => x>=0&&x<GRID.w&&y>=0&&y<GRID.h&&walk[y][x];
+
+// BFS kortste pad over begaanbare cellen (4-richtingen -> elke stap is 1 cel).
+function bfs(start, goal){
+  if(start.x===goal.x && start.y===goal.y) return [];
+  const key = (x,y)=>y*GRID.w+x;
+  const prev = new Map(), seen = new Set([key(start.x,start.y)]);
+  let q = [start];
+  while(q.length){
+    const nq = [];
+    for(const c of q){
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx=c.x+dx, ny=c.y+dy;
+        if(!walkable(nx,ny) || seen.has(key(nx,ny))) continue;
+        seen.add(key(nx,ny)); prev.set(key(nx,ny), c);
+        if(nx===goal.x && ny===goal.y){
+          const path=[]; let cur={x:nx,y:ny};
+          while(!(cur.x===start.x&&cur.y===start.y)){ path.push(cur); cur=prev.get(key(cur.x,cur.y)); }
+          return path.reverse();
+        }
+        nq.push({x:nx,y:ny});
+      }
+    }
+    q = nq;
+  }
+  return []; // onbereikbaar (zou niet mogen)
+}
+
+// ---------------------------------------------------------------------------
+// Sim state
+// ---------------------------------------------------------------------------
+const MIN_DOMAIN_STEPS = 50;     // doel-domein verandert minimaal elke 50 steps
+let rng, agent, stats, trail, nextChangeAt;
+
+function reset(seed){
+  rng = mulberry32(seed);
+  agent = { pos: center(DOMAINS[0]), targetDomain: 0, activity: "idle", assigned: "idle", path: [] };
+  stats = { frame: 0, since: 0, violations: 0, lastDelta: 0 };
+  trail = [];
+  nextChangeAt = MIN_DOMAIN_STEPS + (rng()*40|0);
+}
+
+// EXTERNE functie: bepaalt waar de agent moet zijn. In het echte ABM doet een
+// andere module dit; hier wisselt het minimaal elke 50 steps. De agent zelf
+// verandert zijn doel-domein NOOIT — hij reageert er alleen op.
+function externalDomainController(){
+  if(stats.since >= nextChangeAt){
+    let next; do { next = rng()*DOMAINS.length|0; } while(next === agent.targetDomain);
+    agent.targetDomain = next;
+    agent.path = [];                 // doel veranderd -> herplan naar nieuw domein
+    stats.since = 0;
+    nextChangeAt = MIN_DOMAIN_STEPS + (rng()*40|0);
+  }
+}
+
+function randomCellInRoom(d){
+  let c; do { c = { x: d.x0 + (rng()*(d.x1-d.x0+1)|0), y: d.y0 + (rng()*(d.y1-d.y0+1)|0) }; }
+  while(!walkable(c.x,c.y));
+  return c;
+}
+
+function stepOnce(){
+  if(agent.path.length===0) return;
+  const next = agent.path.shift();
+  const d = cheb(agent.pos, next);
+  stats.lastDelta = d;
+  if(d > 1){ stats.violations++; return; }   // harde check: nooit springen
+  trail.push({ ...agent.pos, color: DOMAINS[agent.targetDomain].color });
+  if(trail.length > 16) trail.shift();
+  agent.pos = next;
+}
+
+function tick(){
+  stats.frame++; stats.since++; stats.lastDelta = 0;
+
+  // 1. Externe controller kan het doel-domein zetten (elke step gecheckt).
+  externalDomainController();
+
+  // 2. Check: zit ik al in het domein waar ik moet zijn?
+  const inTarget = roomOf(agent.pos) === agent.targetDomain;
+
+  if(!inTarget){
+    // 3a. Niet in doel-domein -> via de gang ernaartoe lopen.
+    agent.activity = "move to domain";
+    if(agent.path.length === 0) agent.path = bfs(agent.pos, center(DOMAINS[agent.targetDomain]));
+    stepOnce();
+    if(roomOf(agent.pos) === agent.targetDomain){   // net aangekomen
+      agent.path = [];
+      agent.assigned = rng() < 0.5 ? "idle" : "working"; // externe keuze; testcase: 50/50
+    }
+    return;
+  }
+
+  // 3b. In het juiste domein -> activiteit bepaalt gedrag.
+  agent.activity = agent.assigned;
+  if(agent.activity === "working"){
+    agent.path = [];          // blijft staan waar hij is
+    return;
+  }
+  // idle: loopt wat rond binnen de kamer.
+  if(agent.path.length === 0) agent.path = bfs(agent.pos, randomCellInRoom(DOMAINS[agent.targetDomain]));
+  stepOnce();
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const cell = Math.floor(Math.min(cv.width/GRID.w, cv.height/GRID.h));
+const ox = (cv.width - cell*GRID.w)/2, oy = (cv.height - cell*GRID.h)/2;
+
+const lg = document.getElementById('legend');
+DOMAINS.forEach(d => { const el=document.createElement('div'); el.className='lg';
+  el.innerHTML = `<span class="sw" style="background:${d.color}"></span>${d.name}`; lg.appendChild(el); });
+(function(){ const el=document.createElement('div'); el.className='lg';
+  el.innerHTML = `<span class="sw" style="background:#3a3a44"></span>gang`; lg.appendChild(el); })();
+
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // gangen (alle begaanbare cellen die niet in een kamer zitten)
+  ctx.fillStyle = '#2b2b34';
+  for(let y=0;y<GRID.h;y++) for(let x=0;x<GRID.w;x++)
+    if(walk[y][x] && roomOf({x,y})===-1) ctx.fillRect(ox+x*cell, oy+y*cell, cell, cell);
+  // domeinen
+  DOMAINS.forEach((d,i) => {
+    const x=ox+d.x0*cell, y=oy+d.y0*cell, w=(d.x1-d.x0+1)*cell, h=(d.y1-d.y0+1)*cell;
+    ctx.fillStyle = d.color + (i===agent.targetDomain ? '3a' : '18');
+    ctx.strokeStyle = d.color + (i===agent.targetDomain ? 'dd' : '66');
+    ctx.lineWidth = i===agent.targetDomain ? 2 : 1;
+    ctx.fillRect(x,y,w,h); ctx.strokeRect(x+.5,y+.5,w-1,h-1);
+    ctx.fillStyle = d.color; ctx.font = '11px system-ui'; ctx.fillText(d.name, x+4, y+13);
+  });
+  // resterende queue
+  ctx.fillStyle = '#ffffff22';
+  agent.path.forEach(p => ctx.fillRect(ox+p.x*cell+cell*0.35, oy+p.y*cell+cell*0.35, cell*0.3, cell*0.3));
+  // trail
+  trail.forEach((t,idx) => { const a=(idx+1)/trail.length;
+    ctx.fillStyle = t.color + Math.floor(a*130).toString(16).padStart(2,'0');
+    ctx.fillRect(ox+t.x*cell+cell*0.28, oy+t.y*cell+cell*0.28, cell*0.44, cell*0.44); });
+  // agent
+  const cx=ox+agent.pos.x*cell+cell/2, cy=oy+agent.pos.y*cell+cell/2;
+  ctx.beginPath(); ctx.arc(cx,cy,cell*0.4,0,7);
+  ctx.fillStyle = agent.activity==='working' ? '#cfcfcf'
+                : agent.activity==='move to domain' ? DOMAINS[agent.targetDomain].color : '#ffffff';
+  ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='#fff'; ctx.stroke();
+  // hud
+  const at = roomOf(agent.pos);
+  document.getElementById('frame').textContent = stats.frame;
+  document.getElementById('target').textContent = DOMAINS[agent.targetDomain].name;
+  document.getElementById('at').textContent = at===-1 ? 'gang' : DOMAINS[at].name;
+  document.getElementById('act').textContent = agent.activity;
+  document.getElementById('q').textContent = agent.path.length;
+  document.getElementById('since').textContent = stats.since;
+  document.getElementById('viol').textContent = stats.violations;
+  const dEl=document.getElementById('delta');
+  dEl.textContent = stats.lastDelta; dEl.style.color = stats.lastDelta>1 ? '#ff5050' : '#fff';
+}
+
+// ---------------------------------------------------------------------------
+// Loop + controls
+// ---------------------------------------------------------------------------
+let playing=true, speed=1, acc=0, lastT=performance.now(), seed=12345;
+function loop(now){ const dt=now-lastT; lastT=now;
+  if(playing){ acc += dt*speed; while(acc>140){ acc-=140; tick(); } draw(); }
+  requestAnimationFrame(loop);
+}
+document.getElementById('toggle').onclick = function(){ playing=!playing; this.textContent=playing?'pause':'play'; };
+document.getElementById('speed').onclick = function(){ speed = speed>=4?1:speed*2; this.textContent='speed x'+speed; };
+document.getElementById('reseed').onclick = function(){ seed=(Math.random()*1e9)|0; reset(seed); draw(); };
+document.getElementById('restart').onclick = function(){ reset(seed); draw(); };
+
+reset(seed); draw(); requestAnimationFrame(loop);
+</script>
+</body></html>

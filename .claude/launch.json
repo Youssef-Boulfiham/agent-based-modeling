@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8731", "--directory", "testcases/sandbox/domain_extraction"],
       "port": 8731
+    },
+    {
+      "name": "walking-behaviour",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8732", "--directory", "testcases/html/walking_behaviour"],
+      "port": 8732
     }
   ]
 }

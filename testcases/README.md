@@ -1,182 +1,59 @@
-# Test Cases & Sandbox
+# Test Cases & Sandboxes
 
-Testing & experimentation space for agent-based modeling system.
+Testing & experimentation space for the agent-based modeling system.
 
 **Before working on any test folder, read its README first.**
 
-## Structure
+## Structure — by language
+
+Testcases are organised by the sandbox technology they run in. Depending on what
+a testcase needs (quick visual proof, native perf, scripting) you build it in
+the matching folder.
 
 ```
 testcases/
-├── README.md                # This file
-├── sandbox/                 # POC & concept testing (ACTIVE)
-│   ├── README.md            # Sandbox documentation
-│   ├── sandbox.cpp          # Simplified simulation (no SDL/GLM)
-│   ├── build.sh             # Compile script
-│   ├── build/               # Binary output
-│   └── results/             # Simulation logs
-├── pathfinding/             # A* algorithm tests (PLANNED)
-├── agent-behavior/          # Agent logic tests (PLANNED)
-├── environment/             # World state tests (PLANNED)
-├── statistics/              # Metrics tests (PLANNED)
-├── ui-elements/             # UI component tests (PLANNED)
-└── integration/             # End-to-end tests (PLANNED)
+├── README.md       # This file
+├── html/           # Browser sandboxes — self-contained HTML/JS, instant visual
+│   └── walking_behaviour/   # Domein-gestuurd looppad via gangen (ACTIVE)
+├── pygame/         # Python/pygame sandboxes (ready, none yet)
+└── cpp/            # Native C++ sandboxes — no SDL/GLM, stdlib only
+    └── sandbox.cpp          # Minimal POC simulator
 ```
 
-## Testing Philosophy
+## Which folder?
 
-**Isolation** — Each test folder tests one component in isolation from full system complexity.
+| Need                                   | Folder    |
+|----------------------------------------|-----------|
+| Instant visual proof, no build, share  | `html/`   |
+| Python scripting / quick numeric proto | `pygame/` |
+| Native perf, core-logic close to `src/`| `cpp/`    |
 
-**Speed** — Tests compile & run in seconds, not minutes. No SDL, no graphics overhead.
+A single behaviour usually lives in **one** folder — the one that proves it best.
+Walking behaviour is visual & interactive, so it lives in `html/`.
 
-**Reproducibility** — Tests use fixed seeds, log all inputs, and can be re-run identically.
+## Testing philosophy
 
-**Documentation** — Each folder documents what it tests, how to run it, how to interpret results.
+- **Isolation** — each testcase exercises one component without the full system.
+- **Speed** — runs in seconds, no heavy deps.
+- **Reproducibility** — fixed seeds, deterministic runs (`reseed` to explore).
+- **Documentation** — each folder explains what it tests and how to read results.
 
-## Active: Sandbox Mode
+## Active testcases
 
-`sandbox/` is a minimal C++ simulator (zero external dependencies).
+### html/walking_behaviour — domein-gestuurd looppad via gangen
+Every step the agent checks which **domain** it must be in (set by an external
+controller, stable ≥ 50 steps). Not there yet → it routes **via the corridors
+(gangen)** to that domain. Already there → activity decides: **idle** (wander the
+room) or **working** (stand still); en route it is **move to domain**. Walks a
+priority queue one cell per step; hard rule: never jumps. **Domain drives the
+walk; the three activities are the loop-state.** See `html/walking_behaviour/README.md`.
 
-**Use it to:**
-- Validate concepts before main integration
-- Debug core algorithms (movement, activity selection, etc.)
-- Test mathematical models
-- Create deterministic scenarios
-- Profile performance without UI overhead
+### cpp/sandbox.cpp — minimal POC simulator
+Stripped-down C++ sim (no SDL/GLM) for validating core logic and profiling.
+See `cpp/README.md`.
 
-**Why isolated?**
-- Main system has SDL/graphics overhead
-- Sandbox is pure simulation logic
-- Fast iteration & debugging
-- Clear cause-effect for algorithm changes
+## Integration with main code
 
-**Run:**
-```bash
-cd testcases/sandbox
-./build.sh
-cd build && ./sandbox
-```
-
-Output: `results/sandbox_log_YYYYMMDD_HHMMSS.txt`
-
-See `sandbox/README.md` for details.
-
-## Planned: Specialized Test Suites
-
-### pathfinding/
-Tests A* algorithm, grid generation, pathfinding performance.
-
-### agent-behavior/
-Tests individual agent behavior: activity selection, movement, state transitions.
-
-### environment/
-Tests world state management, agent spawning, activity zones, physics.
-
-### statistics/
-Tests metrics calculation, real-time stats, panel rendering.
-
-### ui-elements/
-Tests UI components: buttons, panels, text rendering, interaction.
-
-### integration/
-End-to-end system tests combining all components with SDL.
-
-## Adding New Test Suites
-
-When adding a test folder (e.g., `pathfinding/`):
-
-1. **Create folder** with `README.md` explaining:
-   - What component is tested
-   - Why testing in isolation matters
-   - How to run tests
-   - Expected output format
-   - Passing criteria
-
-2. **Create test executable** (C++, minimal deps):
-   ```cpp
-   // testcases/pathfinding/pathfinding_tests.cpp
-   #include <iostream>
-   // ... minimal headers ...
-   
-   int main() {
-       // Run tests, log results
-   }
-   ```
-
-3. **Create build script** similar to `sandbox/build.sh`:
-   ```bash
-   g++ -std=c++11 -O2 pathfinding_tests.cpp -o build/pathfinding_tests
-   ```
-
-4. **Create results directory** for output logs.
-
-5. **Document expected output** so tests can be validated.
-
-## Test Output Convention
-
-All test suites output logs to `results/` subdirectory:
-```
-testcases/sandbox/results/sandbox_log_YYYYMMDD_HHMMSS.txt
-testcases/pathfinding/results/pathfinding_log_YYYYMMDD_HHMMSS.txt
-```
-
-Each log includes:
-- Test configuration (what's being tested)
-- Test inputs (parameters, initial conditions)
-- Frame-by-frame state (if iterative)
-- Final results (pass/fail, metrics)
-- Timing info (how long the test took)
-
-## Running All Tests
-
-Future: Add top-level script to run all testcases:
-```bash
-./run_all_tests.sh
-```
-
-For now, run manually:
-```bash
-cd testcases/sandbox && ./build.sh && cd build && ./sandbox
-# ... more tests as they're added ...
-```
-
-## Integration with Main Code
-
-Test suites are **decoupled** from main app but **test the same logic**:
-- Sandbox tests Agent/Env core (simplified, no SDL)
-- Main app uses full Agent/Env with UI
-
-Changes to `src/` should trigger test validation:
-1. Modify core logic in `src/Agent.cpp`, etc.
-2. Re-run relevant test suite
-3. Verify behavior unchanged or improved
-4. If regression, fix before committing
-
-## Benchmarking & Metrics
-
-Use test suites to track performance:
-- Save results with timestamps
-- Compare against baselines
-- Identify slow commits
-- Validate optimizations
-
-Example workflow:
-```bash
-cd testcases/sandbox
-./build.sh && cd build && ./sandbox
-# Review results/sandbox_log_*.txt
-# Note metrics: frames, time, agents processed
-# Run again after code change
-# Compare performance delta
-```
-
-## Debugging Failed Tests
-
-If a test fails:
-1. **Read the results log** — First line of investigation
-2. **Check test configuration** — Are inputs correct?
-3. **Verify expectations** — Is the test criteria correct?
-4. **Isolate the issue** — Modify test to narrow down cause
-5. **Document finding** — Log in `data/logs/` for future reference
-
-See `CLAUDE.md` for rule about reading READMEs first.
+Testcases are decoupled from the main app but exercise the same ideas. Validated
+behaviour migrates into `src/` (e.g. `src/Agent.cpp`). The walking behaviour is
+specified in `instruction_manual/` — that 1-A4 is the source of truth.
