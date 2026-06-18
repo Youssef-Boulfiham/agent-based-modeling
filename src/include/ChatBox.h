@@ -25,6 +25,7 @@ private:
     bool pinnedToBottom = true; // true = follow latest; false = locked at anchorTop
     int  anchorTop = 0;         // index of the row shown at the top of the viewport
     int  lastMaxTop = 0;        // top index of the latest page (updated each render)
+    float scrollAccum = 0.0f;   // fractional wheel delta accumulator (trackpad)
 
     bool showAgentAgent = true; // filter toggle for agent-to-agent chatter
     int userMsgCount = 0;       // rotates which agent a user message targets
@@ -50,7 +51,7 @@ public:
 
     // Mouse
     void handleClick(int mx, int my);
-    void scroll(int dy);
+    void scroll(float dy);   // dy > 0 = scroll up (older); already direction-normalized
 };
 
 #endif

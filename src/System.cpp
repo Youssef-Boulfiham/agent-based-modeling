@@ -126,6 +126,9 @@ void System::handleEvents(bool& running) {
                     case SDLK_RIGHT:     uiText->moveCursorRight(); break;
                     case SDLK_RETURN:
                     case SDLK_KP_ENTER:  uiText->submit();          break;
+                    // Keyboard scroll (reliable, independent of mouse wheel).
+                    case SDLK_PAGEUP:    uiText->scroll(3.0f);      break;
+                    case SDLK_PAGEDOWN:  uiText->scroll(-3.0f);     break;
                     default: break;
                 }
                 break;
@@ -135,9 +138,16 @@ void System::handleEvents(bool& running) {
                     uiText->handleClick(event.button.x, event.button.y);
                 break;
 
-            case SDL_MOUSEWHEEL:
-                uiText->scroll(event.wheel.y);
+            case SDL_MOUSEWHEEL: {
+                // Use the precise delta (trackpads report fractions; wheel.y is
+                // often 0). Normalize natural-scroll so dy > 0 is always "up".
+                float dy = event.wheel.preciseY != 0.0f
+                             ? event.wheel.preciseY
+                             : static_cast<float>(event.wheel.y);
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) dy = -dy;
+                uiText->scroll(dy);
                 break;
+            }
 
             default:
                 break;

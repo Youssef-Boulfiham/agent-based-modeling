@@ -182,21 +182,31 @@ void ChatBox::handleClick(int mx, int my) {
     }
 }
 
-void ChatBox::scroll(int dy) {
-    // dy > 0 = wheel up = look back in history; dy < 0 = scroll toward latest.
-    if (dy > 0) {
-        // Leaving the bottom: seed the anchor from the current bottom page so the
-        // first scroll-up step starts exactly where the view is now.
+void ChatBox::scroll(float dy) {
+    // Accumulate fractional wheel deltas (a trackpad sends many tiny values, and
+    // wheel.y is often 0). Only act on whole-row steps; this also cancels jitter
+    // so a stray opposite tick can't accidentally re-pin to the bottom.
+    scrollAccum += dy;
+    int step = static_cast<int>(scrollAccum);   // truncate toward zero
+    if (step == 0) return;
+    scrollAccum -= step;
+
+    if (step > 0) {
+        // Scrolling up = look back in history. Leave the bottom and lock an
+        // absolute anchor so new messages can never move the read position.
         if (pinnedToBottom) {
             pinnedToBottom = false;
-            anchorTop = lastMaxTop; // top row of the latest page (set in render)
+            anchorTop = lastMaxTop;   // top row of the latest page (from render)
         }
-        anchorTop -= dy;
+        anchorTop -= step;
         if (anchorTop < 0) anchorTop = 0;
-    } else if (dy < 0) {
+    } else { // step < 0 : scrolling down toward the latest
         if (!pinnedToBottom) {
-            anchorTop -= dy;            // dy negative -> move down
-            if (anchorTop >= lastMaxTop) pinnedToBottom = true; // reached the end
+            anchorTop += -step;
+            if (anchorTop >= lastMaxTop) {   // reached the end -> follow latest
+                pinnedToBottom = true;
+                anchorTop = lastMaxTop;
+            }
         }
     }
 }
