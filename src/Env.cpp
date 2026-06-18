@@ -139,34 +139,63 @@ void Env::step() {
     activeAgents = agents.size();
     frameCount++;
 
-    // Periodic agent-to-agent chatter (every ~20 frames)
+    // Periodic agent-to-agent chatter (every ~20 frames).
+    // The agents in the textbox ARE the agents in the environment: the message
+    // text is derived from the speaker's REAL state, never made up. The sender
+    // reports what it is actually doing this step.
     if (frameCount % 20 == 0 && agents.size() >= 2) {
         std::uniform_int_distribution<int> pick(0, static_cast<int>(agents.size()) - 1);
         int a_idx = pick(rng);
         int b_idx = pick(rng);
-        if (a_idx != b_idx) {
+        if (a_idx != b_idx && messageLog) {
             Agent* agentA = agents[a_idx];
             Agent* agentB = agents[b_idx];
-            std::vector<std::string> msgs = {
-                "Moving to domain",
-                "Status update",
-                "At position",
-                "Switching domain",
-                "Queue depth: " + std::to_string(static_cast<int>(frameCount % 10))
-            };
-            std::uniform_int_distribution<int> msg_pick(0, static_cast<int>(msgs.size()) - 1);
-            std::string msg = msgs[msg_pick(rng)];
 
-            if (messageLog) {
-                messageLog->queueAgentChatter(
-                    "Agent " + std::to_string(agentA->getId()),
-                    "Agent " + std::to_string(agentB->getId()),
-                    msg,
-                    agentA->getPosition(),
-                    "Domain " + std::to_string(agentA->getTargetDomain()),
-                    agentA->getActivity()
-                );
+            int       id     = agentA->getId();
+            glm::vec2 pos    = agentA->getPosition();
+            int       room   = roomOf(pos);                // domain it is actually IN
+            int       target = agentA->getTargetDomain();  // domain it MUST be in
+            std::string act  = agentA->getActivity();      // real activity this step
+
+            // A genuine switch: the agent now stands in a domain different from
+            // the one it was in the last time it spoke. Read straight from state.
+            bool inDomain = room > WalkGrid::CORRIDOR;
+            auto prev = lastReportedDomain.find(id);
+            bool justSwitched = inDomain && prev != lastReportedDomain.end() &&
+                                prev->second != room;
+
+            std::string msg;
+            if (justSwitched) {
+                msg = "Switched to Domain " + std::to_string(room);
+            } else if (act == "move to domain") {
+                msg = "Moving to Domain " + std::to_string(target);
+            } else if (act == "working") {
+                msg = "Working in Domain " + std::to_string(room);
+            } else if (act == "idle") {
+                msg = "Idle in Domain " + std::to_string(room);
+            } else if (inDomain) {
+                msg = "In Domain " + std::to_string(room);
+            } else {
+                msg = "At (" + std::to_string(static_cast<int>(pos.x)) + "," +
+                              std::to_string(static_cast<int>(pos.y)) + ")";
             }
+
+            // Remember the domain this agent just reported (only when in one),
+            // so the next switch can be detected against it.
+            if (inDomain) lastReportedDomain[id] = room;
+
+            std::string domainStr = inDomain
+                ? "Domain " + std::to_string(room)
+                : "the corridor";
+
+            messageLog->queueAgentChatter(
+                "Agent " + std::to_string(id),
+                "Agent " + std::to_string(agentB->getId()),
+                msg,
+                pos,
+                domainStr,            // state snapshot: where it ACTUALLY is
+                act
+            );
         }
     }
 }
@@ -370,7 +399,7 @@ std::string Env::findActivityInDomain(int domain) const {
 
 // Queue user input message
 void Env::queueUserInput(const std::string& text, int agentId) {
-    if (!messageLog || agentId < 0 || agentId >= agents.size()) return;
+    if (!messageLog || agentId < 0 || agentId >= static_cast<int>(agents.size())) return;
 
     Agent* agent = agents[agentId];
     messageLog->queueUserInput(

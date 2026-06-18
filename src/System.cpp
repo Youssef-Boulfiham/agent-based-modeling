@@ -3,6 +3,7 @@
 #include "../include/Buttons.h"
 #include "../include/Statistics.h"
 #include "../include/ChatBox.h"
+#include <SDL2/SDL_image.h>
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -27,6 +28,11 @@ bool System::initialize() {
 bool System::initSDL() {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         std::cerr << "SDL init failed\n";
+        return false;
+    }
+
+    if (!(IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG)) {
+        std::cerr << "SDL_image PNG init failed: " << IMG_GetError() << "\n";
         return false;
     }
 
@@ -64,6 +70,9 @@ void System::initializeSimulation() {
     uiButtons = new UIButtons();
     uiStats = new Statistics(simulation);
     uiText = new ChatBox();
+    uiText->setWorld(simulation);
+
+    SDL_StartTextInput();   // enable SDL_TEXTINPUT events for the chat box
 
     std::cout << "Simulation initialized\n";
 }
@@ -98,13 +107,40 @@ void System::handleEvents(bool& running) {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) {
-            running = false;
-        }
-        if (event.type == SDL_KEYDOWN) {
-            if (event.key.keysym.sym == SDLK_ESCAPE) {
+        switch (event.type) {
+            case SDL_QUIT:
                 running = false;
-            }
+                break;
+
+            case SDL_TEXTINPUT:
+                // Printable characters typed into the chat input.
+                uiText->insertText(event.text.text);
+                break;
+
+            case SDL_KEYDOWN:
+                switch (event.key.keysym.sym) {
+                    case SDLK_ESCAPE:   running = false;            break;
+                    case SDLK_BACKSPACE: uiText->backspace();       break;
+                    case SDLK_DELETE:    uiText->del();             break;
+                    case SDLK_LEFT:      uiText->moveCursorLeft();  break;
+                    case SDLK_RIGHT:     uiText->moveCursorRight(); break;
+                    case SDLK_RETURN:
+                    case SDLK_KP_ENTER:  uiText->submit();          break;
+                    default: break;
+                }
+                break;
+
+            case SDL_MOUSEBUTTONDOWN:
+                if (event.button.button == SDL_BUTTON_LEFT)
+                    uiText->handleClick(event.button.x, event.button.y);
+                break;
+
+            case SDL_MOUSEWHEEL:
+                uiText->scroll(event.wheel.y);
+                break;
+
+            default:
+                break;
         }
     }
 }
@@ -136,6 +172,8 @@ void System::run() {
 }
 
 void System::shutdown() {
+    SDL_StopTextInput();
+
     delete uiButtons;
     delete uiStats;
     delete uiText;
@@ -151,5 +189,6 @@ void System::shutdown() {
         delete simulation;
     }
 
+    IMG_Quit();
     SDL_Quit();
 }

@@ -53,6 +53,7 @@ private:
 
     // Message logging and priority queue
     MessageLog* messageLog;
+    std::unordered_map<int, int> lastReportedDomain; // agentId -> domain at its last chatter
 
 public:
     Env(float w, float h, int maxAgents);

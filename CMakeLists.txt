@@ -22,6 +22,7 @@ set(SOURCES
     src/Statistics.cpp
     src/ChatBox.cpp
     src/MessageLog.cpp
+    src/TextRenderer.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})

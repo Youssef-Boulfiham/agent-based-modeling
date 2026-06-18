@@ -187,6 +187,14 @@ function renderLog() {
     return true;
   });
 
+  // Anchor rule (capture BEFORE rebuild). New rows always append at the BOTTOM:
+  //   - at bottom  -> base case: keep showing the most recent message
+  //   - scrolled up -> restore the exact scrollTop, so the rows being read stay
+  //     fixed (content added below the viewport doesn't move what's above).
+  const prevTop = container.scrollTop;
+  const prevHeight = container.scrollHeight;
+  const atBottom = prevTop + container.clientHeight >= prevHeight - 4;
+
   container.innerHTML = "";
   filtered.forEach(entry => {
     const div = document.createElement("div");
@@ -204,6 +212,12 @@ function renderLog() {
     div.innerHTML = html;
     container.appendChild(div);
   });
+
+  if(atBottom) {
+    container.scrollTop = container.scrollHeight;  // stick to latest
+  } else {
+    container.scrollTop = prevTop;                 // hold reading position
+  }
 }
 
 function escape(text) {
