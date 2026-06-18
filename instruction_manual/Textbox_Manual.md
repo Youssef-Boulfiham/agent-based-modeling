@@ -159,3 +159,180 @@ To rebuild from scratch:
 ## Testing
 
 Open in browser at `localhost:8733`. Type messages, watch agents respond. Toggle filter. Scroll through history. Refresh page — history persists.
+
+---
+
+# Artefact — C++ Implementation (verbatim, commit 050aab7, 2026-06-18)
+
+Recovery guarantee: pasting these functions into a clean ABM reproduces the
+textbox logging behaviour exactly. Trace order: Env fields → Env::step() →
+MessageLog (queue + persist).
+
+## Env fields (src/include/Env.h)
+
+```cpp
+    // Message logging and priority queue
+    MessageLog* messageLog;
+
+    // Message logging interface
+    MessageLog* getMessageLog() const { return messageLog; }
+    void queueUserInput(const std::string& text, int agentId);
+```
+
+## Env ctor / cleanup (src/Env.cpp)
+
+```cpp
+Env::Env(float w, float h, int maxAgents)
+    : width(w), height(h), deltaTime(0.016f),
+      frameCount(0), isRunning(false), maxAgents(maxAgents),
+      activeAgents(0), messageLog(nullptr) {
+    agents.reserve(maxAgents);
+    messageLog = new MessageLog();
+}
+```
+
+```cpp
+    if (messageLog) { delete messageLog; messageLog = nullptr; }
+```
+
+## Env::step() (src/Env.cpp) — queue drained FIRST, then chatter
+
+```cpp
+void Env::step() {
+    if (!isRunning) return;
+
+    // Process highest-priority messages from queue
+    if (messageLog) messageLog->processQueue();
+
+    controlAgentDomains();   // external controller: assign target domains
+    updateAgents();
+    activeAgents = agents.size();
+    frameCount++;
+
+    // Periodic agent-to-agent chatter (every ~20 frames)
+    if (frameCount % 20 == 0 && agents.size() >= 2) {
+        std::uniform_int_distribution<int> pick(0, static_cast<int>(agents.size()) - 1);
+        int a_idx = pick(rng);
+        int b_idx = pick(rng);
+        if (a_idx != b_idx) {
+            Agent* agentA = agents[a_idx];
+            Agent* agentB = agents[b_idx];
+            std::vector<std::string> msgs = {
+                "Moving to domain",
+                "Status update",
+                "At position",
+                "Switching domain",
+                "Queue depth: " + std::to_string(static_cast<int>(frameCount % 10))
+            };
+            std::uniform_int_distribution<int> msg_pick(0, static_cast<int>(msgs.size()) - 1);
+            std::string msg = msgs[msg_pick(rng)];
+
+            if (messageLog) {
+                messageLog->queueAgentChatter(
+                    "Agent " + std::to_string(agentA->getId()),
+                    "Agent " + std::to_string(agentB->getId()),
+                    msg,
+                    agentA->getPosition(),
+                    "Domain " + std::to_string(agentA->getTargetDomain()),
+                    agentA->getActivity()
+                );
+            }
+        }
+    }
+}
+```
+
+## Env::queueUserInput() (src/Env.cpp) — user message entrypoint
+
+```cpp
+void Env::queueUserInput(const std::string& text, int agentId) {
+    if (!messageLog || agentId < 0 || agentId >= agents.size()) return;
+
+    Agent* agent = agents[agentId];
+    messageLog->queueUserInput(
+        "user",
+        "Agent " + std::to_string(agentId),
+        text,
+        agent->getPosition(),
+        "Domain " + std::to_string(agent->getTargetDomain()),
+        agent->getActivity()
+    );
+}
+```
+
+## MessageLog priority queue (src/MessageLog.cpp)
+
+User input jumps to FRONT of queue (highest priority); chatter appends.
+
+```cpp
+void MessageLog::queueUserInput(const std::string& from, const std::string& to, const std::string& text,
+                               glm::vec2 pos, const std::string& domain, const std::string& action) {
+    // User input: highest priority (add to front)
+    LogTask task{LogTask::USER_INPUT, from, to, text, pos, domain, action};
+    std::queue<LogTask> newQueue;
+    newQueue.push(task);
+    while (!taskQueue.empty()) {
+        newQueue.push(taskQueue.front());
+        taskQueue.pop();
+    }
+    taskQueue = newQueue;
+}
+
+void MessageLog::queueAgentChatter(const std::string& from, const std::string& to, const std::string& text,
+                                 glm::vec2 pos, const std::string& domain, const std::string& action) {
+    LogTask task{LogTask::AGENT_CHATTER, from, to, text, pos, domain, action};
+    taskQueue.push(task);
+}
+```
+
+## MessageLog::processQueue() — one task per frame, persist on write
+
+```cpp
+void MessageLog::processQueue() {
+    if (taskQueue.empty()) return;
+
+    LogTask task = taskQueue.front();
+    taskQueue.pop();
+
+    LogEntry entry;
+    entry.timestamp = getCurrentTimestamp();
+    entry.from = task.from;
+    entry.to = task.to;
+    entry.text = task.text;
+    entry.state.posX = task.pos.x;
+    entry.state.posY = task.pos.y;
+    entry.state.domain = task.domain;
+    entry.state.action = task.action;
+
+    history.push_back(entry);
+    writeToFile(entry);
+    trimHistory();
+}
+```
+
+## MessageLog::writeToFile() — JSON-line append to data/logs/textbox_history.jsonl
+
+```cpp
+void MessageLog::writeToFile(const LogEntry& entry) {
+    std::ofstream file(logFilePath, std::ios::app);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open message log file: " << logFilePath << "\n";
+        return;
+    }
+
+    // JSON format (one line per entry)
+    file << "{"
+         << "\"timestamp\":\"" << entry.timestamp << "\","
+         << "\"from\":\"" << entry.from << "\","
+         << "\"to\":\"" << entry.to << "\","
+         << "\"text\":\"" << entry.text << "\","
+         << "\"state\":{"
+         << "\"pos\":{\"x\":" << entry.state.posX << ",\"y\":" << entry.state.posY << "},"
+         << "\"domain\":\"" << entry.state.domain << "\","
+         << "\"action\":\"" << entry.state.action << "\""
+         << "}"
+         << "}\n";
+
+    file.close();
+}
+```
