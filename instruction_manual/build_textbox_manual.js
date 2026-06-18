@@ -1,0 +1,438 @@
+const fs = require("fs");
+const {
+  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+  AlignmentType, LevelFormat, HeadingLevel, BorderStyle, WidthType,
+  ShadingType, PageBreak,
+} = require("docx");
+
+const ACCENT = "2D6CDF";
+const cellBorder = { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" };
+const borders = { top: cellBorder, bottom: cellBorder, left: cellBorder, right: cellBorder };
+const cellMargins = { top: 60, bottom: 60, left: 120, right: 120 };
+
+function headerCell(text, w) {
+  return new TableCell({
+    borders, width: { size: w, type: WidthType.DXA }, margins: cellMargins,
+    shading: { fill: "D5E1F5", type: ShadingType.CLEAR },
+    children: [new Paragraph({ children: [new TextRun({ text, bold: true, size: 18 })] })],
+  });
+}
+function bodyCell(text, w, bold = false) {
+  return new TableCell({
+    borders, width: { size: w, type: WidthType.DXA }, margins: cellMargins,
+    children: [new Paragraph({ children: [new TextRun({ text, bold, size: 18 })] })],
+  });
+}
+
+const doc = new Document({
+  styles: {
+    default: { document: { run: { font: "Arial", size: 19 } } },
+    paragraphStyles: [
+      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 30, bold: true, font: "Arial", color: "1A1A1A" },
+        paragraph: { spacing: { before: 0, after: 80 }, outlineLevel: 0 } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 21, bold: true, font: "Arial", color: ACCENT },
+        paragraph: { spacing: { before: 160, after: 60 }, outlineLevel: 1 } },
+    ],
+  },
+  numbering: {
+    config: [
+      { reference: "steps",
+        levels: [{ level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 460, hanging: 300 } } } }] },
+      { reference: "bul",
+        levels: [{ level: 0, format: LevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 460, hanging: 300 } } } }] },
+    ],
+  },
+  sections: [{
+    properties: {
+      page: {
+        size: { width: 11906, height: 16838 }, // A4
+        margin: { top: 1080, right: 1080, bottom: 1080, left: 1080 },
+      },
+    },
+    children: [
+      new Paragraph({ heading: HeadingLevel.HEADING_1,
+        children: [new TextRun("Textbox — Agent Communication Log — Instruction Manual")] }),
+      new Paragraph({ spacing: { after: 120 }, children: [new TextRun({
+        text: "How the textbox records every message between the user and the agents (and the agents amongst themselves). This A4 describes the full goal; hand it over to start again from scratch.",
+        italics: true, size: 18, color: "555555" })] }),
+
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("1. Goal in one sentence")] }),
+      new Paragraph({ spacing: { after: 60 }, children: [new TextRun(
+        "Every message — user-to-agent, agent-to-agent — is recorded into a persistent chat history with a timestamp and the sending agent's state. The user is the boss: user input has the highest priority in the queue, is processed first, then the agents resume their background work.")] }),
+
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("2. Core concepts")] }),
+      ...bulletRich([
+        { text: "Priority queue: ", bold: true },
+        { text: "all messages enter a queue. User input jumps to the FRONT (highest priority); agent chatter appends to the back. One task is processed per frame. The user never gets blocked — input is always accepted, agents pause, respond, then continue." },
+      ]),
+      ...bulletRich([
+        { text: "Message record: ", bold: true },
+        { text: "each entry stores timestamp, from, to, text, and a snapshot of the sender's state (position, domain, action). The state is captured at send time but is NOT shown in the UI row." },
+      ]),
+      ...bulletRich([
+        { text: "Persistence: ", bold: true },
+        { text: "every entry is appended to data/logs/textbox_history.jsonl in JSON-line format, automatically after each message. History survives a program restart (loaded on init). Max 1000 entries (oldest trimmed)." },
+      ]),
+      ...bullet("Filter toggle: agent-to-agent chatter can be hidden/shown without losing history. User messages are always visible."),
+
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("3. Display — hard rules")] }),
+      ...numbered("One row per message: \"HH:MM:SS  from → to: text\". No wrapping, no extra state line in the row."),
+      ...numbered("Background color distinguishes sender: user messages dark blue, agent messages dark green. No other per-message coloring."),
+      ...numbered("No auto-scroll: when a new message arrives while the user is scrolled up, the view does NOT jump. A manual \"Jump to Bottom\" button returns to the latest row."),
+      ...numbered("Two buttons only: \"Hide/Show Agent-Agent\" and \"Jump to Bottom\". No clear, no export (saving is automatic)."),
+
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("4. The frame loop")] }),
+      new Table({
+        width: { size: 9746, type: WidthType.DXA },
+        columnWidths: [2450, 7296],
+        rows: [
+          new TableRow({ tableHeader: true, children: [headerCell("Step", 2450), headerCell("What happens", 7296)] }),
+          new TableRow({ children: [bodyCell("process queue", 2450, true), bodyCell("First each frame: pop one task from the queue (user input is at the front), build a LogEntry with timestamp + state, append to history, write to file.", 7296)] }),
+          new TableRow({ children: [bodyCell("agent logic", 2450, true), bodyCell("Domain control + agent updates run (the walking behaviour). Unchanged by the textbox.", 7296)] }),
+          new TableRow({ children: [bodyCell("emit chatter", 2450, true), bodyCell("Every ~20 frames two distinct agents are picked; one queues a chatter message to the other with its current state.", 7296)] }),
+          new TableRow({ children: [bodyCell("user input", 2450, true), bodyCell("queueUserInput(text, agentId) pushes a USER_INPUT task to the FRONT of the queue — processed next frame before chatter.", 7296)] }),
+        ],
+      }),
+
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("5. Done when")] }),
+      ...bullet("Every message (user and agent) lands in data/logs/textbox_history.jsonl, one JSON object per line."),
+      ...bullet("User input is always accepted and is processed before agent chatter (front of queue)."),
+      ...bullet("Each entry carries timestamp, from, to, text, and sender state (pos, domain, action)."),
+      ...bullet("History reloads on restart; capped at 1000 entries."),
+
+      new Paragraph({ spacing: { before: 140 }, border: { top: { style: BorderStyle.SINGLE, size: 6, color: ACCENT, space: 6 } },
+        children: [new TextRun({ text: "Reference implementation: testcases/html/textbox/index.html (browser sandbox, localStorage). C++ port: src/MessageLog.cpp + Env wiring, persisting to data/logs/textbox_history.jsonl.",
+          size: 17, italics: true, color: "555555" })] }),
+
+      // ── ARTEFACT ────────────────────────────────────────────────────────────
+      new Paragraph({ children: [new PageBreak()] }),
+
+      new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: "Artefact v1 — Verbatim Code", bold: true, size: 32, font: "Arial", color: "1F3864" })] }),
+      new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: "Commit: 050aab7  —  2026-06-18  —  Branch: dev", size: 17, font: "Courier New", color: "555555" })] }),
+      new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: "Paste sections 1–4 into a clean project to reproduce the approved textbox logging behaviour exactly. Trace order: Env fields → Env::step() → MessageLog (queue + persist).", size: 17, italics: true, color: "555555" })] }),
+      new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: "2E75B6", space: 1 } }, spacing: { before: 0, after: 180 }, children: [] }),
+
+      // Section 1
+      ...artefactSection("1", "Env — Message-Log Fields & Interface"),
+      ...artefactNote("Env members  (src/include/Env.h)"),
+      ...code([
+        "    // Message logging and priority queue",
+        "    MessageLog* messageLog;",
+        "",
+        "    // Message logging interface",
+        "    MessageLog* getMessageLog() const { return messageLog; }",
+        "    void queueUserInput(const std::string& text, int agentId);",
+      ]),
+      ...artefactNote("Env ctor & cleanup  (src/Env.cpp)"),
+      ...code([
+        "Env::Env(float w, float h, int maxAgents)",
+        "    : width(w), height(h), deltaTime(0.016f),",
+        "      frameCount(0), isRunning(false), maxAgents(maxAgents),",
+        "      activeAgents(0), messageLog(nullptr) {",
+        "    agents.reserve(maxAgents);",
+        "    messageLog = new MessageLog();",
+        "}",
+        "",
+        "// inside Env::cleanup():",
+        "    if (messageLog) { delete messageLog; messageLog = nullptr; }",
+      ]),
+
+      // Section 2
+      ...artefactSection("2", "Env::step() — Queue Drained First, Then Chatter  (src/Env.cpp)"),
+      ...code([
+        "void Env::step() {",
+        "    if (!isRunning) return;",
+        "",
+        "    // Process highest-priority messages from queue",
+        "    if (messageLog) messageLog->processQueue();",
+        "",
+        "    controlAgentDomains();   // external controller: assign target domains",
+        "    updateAgents();",
+        "    activeAgents = agents.size();",
+        "    frameCount++;",
+        "",
+        "    // Periodic agent-to-agent chatter (every ~20 frames)",
+        "    if (frameCount % 20 == 0 && agents.size() >= 2) {",
+        "        std::uniform_int_distribution<int> pick(0, (int)agents.size() - 1);",
+        "        int a_idx = pick(rng);",
+        "        int b_idx = pick(rng);",
+        "        if (a_idx != b_idx) {",
+        "            Agent* agentA = agents[a_idx];",
+        "            Agent* agentB = agents[b_idx];",
+        "            std::vector<std::string> msgs = {",
+        "                \"Moving to domain\",",
+        "                \"Status update\",",
+        "                \"At position\",",
+        "                \"Switching domain\",",
+        "                \"Queue depth: \" + std::to_string((int)(frameCount % 10))",
+        "            };",
+        "            std::uniform_int_distribution<int> msg_pick(0, (int)msgs.size() - 1);",
+        "            std::string msg = msgs[msg_pick(rng)];",
+        "",
+        "            if (messageLog) {",
+        "                messageLog->queueAgentChatter(",
+        "                    \"Agent \" + std::to_string(agentA->getId()),",
+        "                    \"Agent \" + std::to_string(agentB->getId()),",
+        "                    msg,",
+        "                    agentA->getPosition(),",
+        "                    \"Domain \" + std::to_string(agentA->getTargetDomain()),",
+        "                    agentA->getActivity()",
+        "                );",
+        "            }",
+        "        }",
+        "    }",
+        "}",
+      ]),
+      ...artefactNote("Env::queueUserInput() — user-message entrypoint  (src/Env.cpp)"),
+      ...code([
+        "void Env::queueUserInput(const std::string& text, int agentId) {",
+        "    if (!messageLog || agentId < 0 || agentId >= agents.size()) return;",
+        "",
+        "    Agent* agent = agents[agentId];",
+        "    messageLog->queueUserInput(",
+        "        \"user\",",
+        "        \"Agent \" + std::to_string(agentId),",
+        "        text,",
+        "        agent->getPosition(),",
+        "        \"Domain \" + std::to_string(agent->getTargetDomain()),",
+        "        agent->getActivity()",
+        "    );",
+        "}",
+      ]),
+
+      // Section 3
+      ...artefactSection("3", "MessageLog — Data Structures  (src/include/MessageLog.h)"),
+      ...code([
+        "struct LogEntry {",
+        "    std::string timestamp;",
+        "    std::string from;",
+        "    std::string to;",
+        "    std::string text;",
+        "    struct State {",
+        "        float posX, posY;",
+        "        std::string domain;",
+        "        std::string action;",
+        "    } state;",
+        "};",
+        "",
+        "struct LogTask {",
+        "    enum Type { USER_INPUT, AGENT_CHATTER } type;",
+        "    std::string from;",
+        "    std::string to;",
+        "    std::string text;",
+        "    glm::vec2 pos;",
+        "    std::string domain;",
+        "    std::string action;",
+        "};",
+        "",
+        "class MessageLog {",
+        "private:",
+        "    std::vector<LogEntry> history;",
+        "    std::queue<LogTask> taskQueue;",
+        "    std::string logFilePath;",
+        "    static constexpr int MAX_ENTRIES = 1000;",
+        "    std::string getCurrentTimestamp() const;",
+        "    void trimHistory();",
+        "    void writeToFile(const LogEntry& entry);",
+        "public:",
+        "    MessageLog(const std::string& outputDir = \"data/logs\");",
+        "    ~MessageLog();",
+        "    void queueUserInput(const std::string& from, const std::string& to,",
+        "                        const std::string& text, glm::vec2 pos,",
+        "                        const std::string& domain, const std::string& action);",
+        "    void queueAgentChatter(const std::string& from, const std::string& to,",
+        "                           const std::string& text, glm::vec2 pos,",
+        "                           const std::string& domain, const std::string& action);",
+        "    void processQueue();",
+        "    bool hasQueuedTasks() const { return !taskQueue.empty(); }",
+        "    const std::vector<LogEntry>& getHistory() const { return history; }",
+        "    int getEntryCount() const { return history.size(); }",
+        "    void loadFromFile();",
+        "    void clear();",
+        "};",
+      ]),
+
+      // Section 4
+      ...artefactSection("4", "MessageLog — Queue, Process & Persist  (src/MessageLog.cpp)"),
+      ...artefactNote("4a. Priority queueing — user input jumps to front"),
+      ...code([
+        "void MessageLog::queueUserInput(const std::string& from, const std::string& to,",
+        "                               const std::string& text, glm::vec2 pos,",
+        "                               const std::string& domain, const std::string& action) {",
+        "    // User input: highest priority (add to front)",
+        "    LogTask task{LogTask::USER_INPUT, from, to, text, pos, domain, action};",
+        "    std::queue<LogTask> newQueue;",
+        "    newQueue.push(task);",
+        "    while (!taskQueue.empty()) {",
+        "        newQueue.push(taskQueue.front());",
+        "        taskQueue.pop();",
+        "    }",
+        "    taskQueue = newQueue;",
+        "}",
+        "",
+        "void MessageLog::queueAgentChatter(const std::string& from, const std::string& to,",
+        "                                 const std::string& text, glm::vec2 pos,",
+        "                                 const std::string& domain, const std::string& action) {",
+        "    LogTask task{LogTask::AGENT_CHATTER, from, to, text, pos, domain, action};",
+        "    taskQueue.push(task);",
+        "}",
+      ]),
+      ...artefactNote("4b. processQueue() — one task per frame, persist on write"),
+      ...code([
+        "void MessageLog::processQueue() {",
+        "    if (taskQueue.empty()) return;",
+        "",
+        "    LogTask task = taskQueue.front();",
+        "    taskQueue.pop();",
+        "",
+        "    LogEntry entry;",
+        "    entry.timestamp = getCurrentTimestamp();",
+        "    entry.from = task.from;",
+        "    entry.to = task.to;",
+        "    entry.text = task.text;",
+        "    entry.state.posX = task.pos.x;",
+        "    entry.state.posY = task.pos.y;",
+        "    entry.state.domain = task.domain;",
+        "    entry.state.action = task.action;",
+        "",
+        "    history.push_back(entry);",
+        "    writeToFile(entry);",
+        "    trimHistory();",
+        "}",
+      ]),
+      ...artefactNote("4c. writeToFile() — JSON-line append to data/logs/textbox_history.jsonl"),
+      ...code([
+        "void MessageLog::writeToFile(const LogEntry& entry) {",
+        "    std::ofstream file(logFilePath, std::ios::app);",
+        "    if (!file.is_open()) {",
+        "        std::cerr << \"Failed to open message log file: \" << logFilePath << \"\\n\";",
+        "        return;",
+        "    }",
+        "    file << \"{\"",
+        "         << \"\\\"timestamp\\\":\\\"\" << entry.timestamp << \"\\\",\"",
+        "         << \"\\\"from\\\":\\\"\" << entry.from << \"\\\",\"",
+        "         << \"\\\"to\\\":\\\"\" << entry.to << \"\\\",\"",
+        "         << \"\\\"text\\\":\\\"\" << entry.text << \"\\\",\"",
+        "         << \"\\\"state\\\":{\"",
+        "         << \"\\\"pos\\\":{\\\"x\\\":\" << entry.state.posX << \",\\\"y\\\":\" << entry.state.posY << \"},\"",
+        "         << \"\\\"domain\\\":\\\"\" << entry.state.domain << \"\\\",\"",
+        "         << \"\\\"action\\\":\\\"\" << entry.state.action << \"\\\"\"",
+        "         << \"}\"",
+        "         << \"}\\n\";",
+        "    file.close();",
+        "}",
+      ]),
+      ...artefactNote("4d. timestamp, trim, ctor (creates dir + loads), loadFromFile()"),
+      ...code([
+        "MessageLog::MessageLog(const std::string& outputDir)",
+        "    : logFilePath(outputDir + \"/textbox_history.jsonl\") {",
+        "    std::filesystem::create_directories(outputDir);",
+        "    loadFromFile();",
+        "}",
+        "",
+        "std::string MessageLog::getCurrentTimestamp() const {",
+        "    auto now = std::time(nullptr);",
+        "    auto tm = *std::localtime(&now);",
+        "    std::ostringstream oss;",
+        "    oss << std::put_time(&tm, \"%H:%M:%S\");",
+        "    return oss.str();",
+        "}",
+        "",
+        "void MessageLog::trimHistory() {",
+        "    if (history.size() > MAX_ENTRIES) {",
+        "        history.erase(history.begin(),",
+        "                      history.begin() + (history.size() - MAX_ENTRIES));",
+        "    }",
+        "}",
+      ]),
+
+      // End note
+      new Paragraph({ spacing: { before: 180 },
+        border: { top: { style: BorderStyle.SINGLE, size: 4, color: "2E75B6", space: 1 } },
+        children: [new TextRun({ text: "End of artefact. Pasting sections 1–4 into a clean project reproduces the approved textbox logging behaviour exactly.",
+          size: 17, italics: true, color: "555555" })] }),
+    ],
+  }],
+});
+
+function bullet(text) {
+  return [new Paragraph({ numbering: { reference: "bul", level: 0 }, spacing: { after: 40 },
+    children: [new TextRun({ text, size: 19 })] })];
+}
+function bulletRich(runs) {
+  return [new Paragraph({ numbering: { reference: "bul", level: 0 }, spacing: { after: 40 },
+    children: runs.map(r => new TextRun({ text: r.text, bold: !!r.bold, size: 19 })) })];
+}
+function numbered(text) {
+  return [new Paragraph({ numbering: { reference: "steps", level: 0 }, spacing: { after: 40 },
+    children: [new TextRun({ text, size: 19 })] })];
+}
+
+function artefactSection(num, title) {
+  const nb = { style: BorderStyle.NONE };
+  const noBorder = { top: nb, bottom: nb, left: nb, right: nb };
+  return [
+    new Paragraph({ spacing: { before: 200, after: 0 }, children: [] }),
+    new Table({
+      width: { size: 9746, type: WidthType.DXA },
+      columnWidths: [560, 9186],
+      borders: { top: nb, bottom: nb, left: nb, right: nb, insideH: nb, insideV: nb },
+      rows: [new TableRow({ children: [
+        new TableCell({
+          borders: noBorder, width: { size: 560, type: WidthType.DXA },
+          shading: { fill: "2E75B6", type: ShadingType.CLEAR },
+          margins: { top: 60, bottom: 60, left: 80, right: 80 },
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 0, after: 0 },
+            children: [new TextRun({ text: num, bold: true, size: 18, font: "Arial", color: "FFFFFF" })] })]
+        }),
+        new TableCell({
+          borders: noBorder, width: { size: 9186, type: WidthType.DXA },
+          shading: { fill: "EEF2FA", type: ShadingType.CLEAR },
+          margins: { top: 60, bottom: 60, left: 140, right: 80 },
+          children: [new Paragraph({ spacing: { before: 0, after: 0 },
+            children: [new TextRun({ text: title, bold: true, size: 19, font: "Arial", color: "1F3864" })] })]
+        }),
+      ]})]
+    }),
+    new Paragraph({ spacing: { before: 0, after: 80 }, children: [] }),
+  ];
+}
+
+function artefactNote(text) {
+  return [new Paragraph({ spacing: { before: 120, after: 40 },
+    children: [new TextRun({ text, bold: true, size: 17, font: "Arial", color: "2E75B6" })] })];
+}
+
+function code(lines) {
+  const nb = { style: BorderStyle.NONE };
+  const noBorder = { top: nb, bottom: nb, left: nb, right: nb };
+  const rows = lines.map(line =>
+    new TableRow({ children: [new TableCell({
+      borders: noBorder, width: { size: 9746, type: WidthType.DXA },
+      shading: { fill: "1A1A2E", type: ShadingType.CLEAR },
+      margins: { top: 18, bottom: 18, left: 160, right: 80 },
+      children: [new Paragraph({ spacing: { before: 0, after: 0 },
+        children: [new TextRun({ text: line.length ? line : " ", font: "Courier New", size: 15, color: "E8E8E8" })] })]
+    })] })
+  );
+  return [new Table({
+    width: { size: 9746, type: WidthType.DXA }, columnWidths: [9746],
+    borders: {
+      top:    { style: BorderStyle.SINGLE, size: 2, color: "333355" },
+      bottom: { style: BorderStyle.SINGLE, size: 2, color: "333355" },
+      left:   { style: BorderStyle.SINGLE, size: 8, color: "2E75B6" },
+      right:  { style: BorderStyle.SINGLE, size: 2, color: "333355" },
+      insideH: nb, insideV: nb,
+    },
+    rows,
+  }), new Paragraph({ spacing: { before: 0, after: 60 }, children: [] })];
+}
+
+Packer.toBuffer(doc).then((buf) => {
+  fs.writeFileSync("Textbox_Communication_Log_Manual.docx", buf);
+  console.log("written Textbox_Communication_Log_Manual.docx");
+});
