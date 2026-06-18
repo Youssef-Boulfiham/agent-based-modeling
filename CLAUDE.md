@@ -8,12 +8,17 @@
   is the final product the user double-clicks** to open the latest version.
   Its launcher (`AgentBasedModeling.app/Contents/MacOS/launcher.sh`) jumps
   straight to the root `./AgentBasedModeling` binary — it does NOT rebuild.
-- **The root binary `./AgentBasedModeling` must always be the newest build.**
-  After ANY change to `src/`, rebuild it into the project root:
+- **The root binary `./AgentBasedModeling` must always be the newest build, AND
+  the `.app` bundle timestamp must be bumped every time.** After ANY change to
+  `src/`, run the build-to-app script — NEVER stop at just the binary copy:
   ```
-  cmake --build build && cp build/AgentBasedModeling ./AgentBasedModeling
+  ./build_app.sh
   ```
-  The `.app` then launches that fresh binary on the next double-click.
+  It rebuilds, installs the root binary, AND `touch`es the `.app` bundle so
+  Finder shows the newest version. The user judges freshness by the `.app`
+  timestamp — if the `.app` is not touched, the user sees a stale date and
+  thinks the fix never shipped. ALWAYS build until the `.app` is newest.
+  (Manual equivalent: `cmake --build build && cp build/AgentBasedModeling ./AgentBasedModeling && touch AgentBasedModeling.app AgentBasedModeling.app/Contents AgentBasedModeling.app/Contents/MacOS`)
 - Run from the project root — asset paths (`data/...`) resolve relative to root.
   The `.app` launcher `cd`s to root before running, so double-click works too.
 - The HTML/cpp items under `testcases/` are sandboxes/proving grounds, **not**

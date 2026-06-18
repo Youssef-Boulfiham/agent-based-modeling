@@ -9,6 +9,7 @@
 
 // Message entry: timestamp + from + to + text + agent state
 struct LogEntry {
+    unsigned long seq = 0;   // stable monotonic id; survives front-trim (see trimHistory)
     std::string timestamp;
     std::string from;
     std::string to;
@@ -37,8 +38,9 @@ private:
     std::vector<LogEntry> history;
     std::queue<LogTask> taskQueue;
     std::string logFilePath;
+    unsigned long nextSeq = 0;   // assigns LogEntry::seq
 
-    static constexpr int MAX_ENTRIES = 1000;
+    static constexpr int MAX_ENTRIES = 100;
 
     std::string getCurrentTimestamp() const;
     void trimHistory();

@@ -57,27 +57,44 @@ const doc = new Document({
       new Paragraph({ heading: HeadingLevel.HEADING_1,
         children: [new TextRun("Textbox — Agent Communication Log — Instruction Manual")] }),
       new Paragraph({ spacing: { after: 120 }, children: [new TextRun({
-        text: "How the textbox records every message between the user and the agents (and the agents amongst themselves). This A4 describes the full goal; hand it over to start again from scratch.",
+        text: "Message history with scrolling, text selection (drag/double/triple-click), and clipboard copy. Inverted scroll direction, stable scroll anchoring via seq ID, independent selection regions (history + input). This A4 describes the full goal; hand it over to start again from scratch.",
         italics: true, size: 18, color: "555555" })] }),
 
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("1. Goal in one sentence")] }),
       new Paragraph({ spacing: { after: 60 }, children: [new TextRun(
-        "Every message — user-to-agent, agent-to-agent — is recorded into a persistent chat history with a timestamp and the sending agent's state. The user is the boss: user input has the highest priority in the queue, is processed first, then the agents resume their background work.")] }),
+        "Every message is recorded in a persistent, scrollable history with inverted scroll direction, full text selection in two independent regions (history + input), and clipboard copy via Cmd+C / Ctrl+C. Scroll anchors on stable per-entry IDs so selections survive message trim.")] }),
 
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("2. Core concepts")] }),
       ...bulletRich([
         { text: "Priority queue: ", bold: true },
-        { text: "all messages enter a queue. User input jumps to the FRONT (highest priority); agent chatter appends to the back. One task is processed per frame. The user never gets blocked — input is always accepted, agents pause, respond, then continue." },
+        { text: "all messages enter a queue. User input jumps to the FRONT (highest priority); agent chatter appends to the back. One task is processed per frame." },
       ]),
       ...bulletRich([
         { text: "Message record: ", bold: true },
-        { text: "each entry stores timestamp, from, to, text, and a snapshot of the sender's state (position, domain, action). The state is captured at send time but is NOT shown in the UI row." },
+        { text: "each entry stores timestamp, from, to, text, sender state (pos, domain, action), and a stable monotonic seq ID." },
       ]),
       ...bulletRich([
         { text: "Persistence: ", bold: true },
-        { text: "every entry is appended to data/logs/textbox_history.jsonl in JSON-line format, automatically after each message. History survives a program restart (loaded on init). Max 1000 entries (oldest trimmed)." },
+        { text: "every entry is appended to data/logs/textbox_history.jsonl in JSON-line format. History reloads on restart. In-memory capped at 100 entries (oldest trimmed). Seq ID survives trim." },
       ]),
-      ...bullet("Filter toggle: agent-to-agent chatter can be hidden/shown without losing history. User messages are always visible."),
+      ...bulletRich([
+        { text: "Scroll direction: ", bold: true },
+        { text: "mouse wheel / trackpad > 0 moves DOWN (toward newer). PgUp/PgDn reversed to match. Can scroll all the way down until only the last message remains." },
+      ]),
+      ...bulletRich([
+        { text: "Scroll anchoring: ", bold: true },
+        { text: "history rows anchored by per-entry seq, not position index. Survives log front-trim — anchored message never drifts." },
+      ]),
+      ...bulletRich([
+        { text: "Text selection: ", bold: true },
+        { text: "drag = select characters/rows. Double-click = word. Triple-click = whole row/line. Two independent regions: history (multiline) and input (single line)." },
+      ]),
+      ...bulletRich([
+        { text: "Copy to clipboard: ", bold: true },
+        { text: "Cmd+C (Mac) or Ctrl+C copies active selection. History selections joined by newline; input is plain text." },
+      ]),
+      ...bullet("Filter toggle: agent-to-agent chatter can be hidden/shown without losing history. User messages always visible."),
+      ...bullet("Scrollbar: visual indicator on right edge. Thumb height = content fraction. Color = state: green (live/pinned), amber (manually scrolled)."),
 
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("3. Display — hard rules")] }),
       ...numbered("One row per message: \"HH:MM:SS  from → to: text\". No wrapping, no extra state line in the row."),

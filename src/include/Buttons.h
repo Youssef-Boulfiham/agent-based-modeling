@@ -14,6 +14,10 @@ private:
 public:
     UIButtons();
     void render(SDL_Renderer* renderer, int windowWidth);
+
+    // Returns index of the button under (x, y), or -1 if none.
+    // Valid after render() has stored the current rects.
+    int hitTest(int x, int y) const;
 };
 
 #endif

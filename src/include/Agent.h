@@ -40,10 +40,17 @@ public:
     const std::string& getStatus() const { return status; }
     bool isBusy() const { return !path.empty(); }
     int getTargetDomain() const { return targetDomain; }
+    const std::vector<glm::vec2>& getPath() const { return path; }
 
     // Setters
     void setPosition(glm::vec2 pos) { position = pos; }
-    void setTargetDomain(int domain) { targetDomain = domain; }
+    void setTargetDomain(int domain) {
+        // Target changed externally -> flush the old route so the next step
+        // replans toward the new domain via the corridor (manual: doel kan elke
+        // step veranderen -> herplan).
+        if (domain != targetDomain) path.clear();
+        targetDomain = domain;
+    }
     void connect(int otherId) { connections.push_back(otherId); }
 
     // Behavior primitives

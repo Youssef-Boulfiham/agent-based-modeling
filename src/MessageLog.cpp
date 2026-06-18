@@ -50,6 +50,7 @@ void MessageLog::processQueue() {
     taskQueue.pop();
 
     LogEntry entry;
+    entry.seq = nextSeq++;
     entry.timestamp = getCurrentTimestamp();
     entry.from = task.from;
     entry.to = task.to;
@@ -106,6 +107,7 @@ void MessageLog::loadFromFile() {
 
         // Simple JSON parsing (fragile but works for this format)
         LogEntry entry;
+        entry.seq = nextSeq++;
 
         // Extract timestamp
         size_t ts_pos = line.find("\"timestamp\":\"") + 13;

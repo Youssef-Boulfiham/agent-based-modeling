@@ -19,3 +19,12 @@ void UIButtons::render(SDL_Renderer* renderer, int windowWidth) {
         SDL_RenderDrawRect(renderer, &buttons[i]);
     }
 }
+
+int UIButtons::hitTest(int x, int y) const {
+    for (int i = 0; i < NUM_BUTTONS; ++i) {
+        const SDL_Rect& b = buttons[i];
+        if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h)
+            return i;
+    }
+    return -1;
+}

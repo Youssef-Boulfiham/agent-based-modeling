@@ -5,9 +5,140 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cctype>
 
 // Random number generation
 static std::mt19937 rng(std::random_device{}());
+
+// Domain palette: RGB color on background.png -> domain id + name.
+// id 0 = CORRIDOR (the hallway). ids 1..7 = activity domains, named by color.
+// Anything not near one of these (white, dark void, anti-aliased edges) -> BLOCKED.
+struct DomainColor { int id; const char* name; int r, g, b; };
+static const DomainColor DOMAIN_PALETTE[] = {
+    {0, "corridor", 204, 193, 173},
+    {1, "purple",   176, 127, 201},
+    {2, "slate",    122, 138, 160},
+    {3, "gold",     201, 161,  75},
+    {4, "blue",      91, 143, 201},
+    {5, "pink",     201,  96, 142},
+    {6, "teal",     108, 192, 168},
+    {7, "orange",   201, 138,  75},
+};
+// Squared-distance threshold for accepting a pixel as a palette color.
+// White (255,255,255) is ~13000 from corridor -> rejected (BLOCKED), as wanted.
+static const int COLOR_MATCH_MAX_SQ = 60 * 60;
+
+// Name lookup for a domain id (used when registering activities).
+static const char* domainName(int id) {
+    for (const auto& d : DOMAIN_PALETTE)
+        if (d.id == id) return d.name;
+    return "domain";
+}
+
+// Classify one RGB pixel into a domain id (0..7) or WalkGrid::BLOCKED.
+static int classifyColor(int r, int g, int b) {
+    int best = WalkGrid::BLOCKED, bestSq = COLOR_MATCH_MAX_SQ + 1;
+    for (const auto& d : DOMAIN_PALETTE) {
+        int dr = r - d.r, dg = g - d.g, db = b - d.b;
+        int sq = dr*dr + dg*dg + db*db;
+        if (sq < bestSq) { bestSq = sq; best = d.id; }
+    }
+    return bestSq <= COLOR_MATCH_MAX_SQ ? best : WalkGrid::BLOCKED;
+}
+
+// Build a domain mask live from background.png by sampling each grid cell's
+// center pixel and nearest-color matching to the palette. Replaces the stale
+// pre-baked CSV so the walkable grid always matches what the user sees.
+// targetCols sets grid density; rows derived from image aspect.
+static bool loadMaskFromImage(const std::string& path, int targetCols,
+                              int& cols, int& rows, std::vector<int>& flat) {
+    SDL_Surface* raw = IMG_Load(path.c_str());
+    if (!raw) return false;
+    SDL_Surface* s = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(raw);
+    if (!s) return false;
+
+    const int W = s->w, H = s->h;
+    int cell = std::max(1, W / targetCols);
+    cols = W / cell;
+    rows = H / cell;
+
+    // 1) Full-resolution classification of every pixel.
+    std::vector<int>   cls(static_cast<size_t>(W) * H, WalkGrid::BLOCKED);
+    std::vector<Uint8> corr(static_cast<size_t>(W) * H, 0); // corridor pixel?
+    SDL_LockSurface(s);
+    const Uint8* pixels = static_cast<const Uint8*>(s->pixels);
+    for (int y = 0; y < H; ++y) {
+        const Uint8* row = pixels + y * s->pitch;
+        for (int x = 0; x < W; ++x) {
+            const Uint8* p = row + x * 4; // RGBA32
+            int d = classifyColor(p[0], p[1], p[2]);
+            cls[static_cast<size_t>(y) * W + x]  = d;
+            corr[static_cast<size_t>(y) * W + x] = (d == WalkGrid::CORRIDOR) ? 1 : 0;
+        }
+    }
+    SDL_UnlockSurface(s);
+    SDL_FreeSurface(s);
+
+    // 2) Dilate the corridor mask by CORRIDOR_DILATE px (separable max filter).
+    //    The hallways are thin tan lines; without thickening they fragment when
+    //    downsampled to the grid and domains become unreachable. R chosen so the
+    //    two connectors per domain survive gridding (validated: all 8 reachable).
+    const int R = 6;
+    auto dilate = [&](std::vector<Uint8>& src) {
+        std::vector<Uint8> tmp(src.size(), 0);
+        for (int y = 0; y < H; ++y)                 // horizontal pass
+            for (int x = 0; x < W; ++x) {
+                Uint8 v = 0;
+                for (int k = -R; k <= R && !v; ++k) {
+                    int xx = x + k;
+                    if (xx >= 0 && xx < W) v = src[static_cast<size_t>(y) * W + xx];
+                }
+                tmp[static_cast<size_t>(y) * W + x] = v;
+            }
+        for (int y = 0; y < H; ++y)                 // vertical pass
+            for (int x = 0; x < W; ++x) {
+                Uint8 v = 0;
+                for (int k = -R; k <= R && !v; ++k) {
+                    int yy = y + k;
+                    if (yy >= 0 && yy < H) v = tmp[static_cast<size_t>(yy) * W + x];
+                }
+                src[static_cast<size_t>(y) * W + x] = v;
+            }
+    };
+    dilate(corr);
+
+    // 3) Downsample to the grid. A cell is CORRIDOR if it holds any (dilated)
+    //    corridor pixel; otherwise the majority domain color in the block;
+    //    otherwise BLOCKED. Corridor priority keeps the hallway connected.
+    flat.assign(static_cast<size_t>(cols) * rows, WalkGrid::BLOCKED);
+    for (int gy = 0; gy < rows; ++gy) {
+        for (int gx = 0; gx < cols; ++gx) {
+            int ys = gy * cell, ye = std::min(H, ys + cell);
+            int xs = gx * cell, xe = std::min(W, xs + cell);
+            bool hasCorr = false;
+            int count[8] = {0,0,0,0,0,0,0,0};
+            for (int y = ys; y < ye && !hasCorr; ++y)
+                for (int x = xs; x < xe; ++x) {
+                    size_t i = static_cast<size_t>(y) * W + x;
+                    if (corr[i]) { hasCorr = true; break; }
+                    int d = cls[i];
+                    if (d >= 1 && d <= 7) ++count[d];
+                }
+            int val = WalkGrid::BLOCKED;
+            if (hasCorr) {
+                val = WalkGrid::CORRIDOR;
+            } else {
+                int bestD = 0, bestN = 0;
+                for (int d = 1; d <= 7; ++d)
+                    if (count[d] > bestN) { bestN = count[d]; bestD = d; }
+                if (bestN > 0) val = bestD;
+            }
+            flat[gy * cols + gx] = val;
+        }
+    }
+    return cols > 0 && rows > 0;
+}
 
 // Load a domain mask CSV (row-major, values: -1 BLOCKED, 0 CORRIDOR, 1..N domain).
 // Returns true on success; fills out cols/rows and the flat domain vector.
@@ -53,16 +184,34 @@ Env::~Env() {
 void Env::buildWorld() {
     // Load the domain mask exported from the input map (data/input -> data/output).
     // Try a few relative paths so it works regardless of launch cwd.
+    int cols = 0, rows = 0;
+    std::vector<int> flat;
+    bool loaded = false;
+
+    // Preferred: extract the walkable grid live from background.png so the grid
+    // always matches the map the user sees (no stale pre-baked mask).
+    const char* imgPaths[] = {
+        "data/input/background.png",
+        "../data/input/background.png",
+        "../../data/input/background.png",
+    };
+    for (const char* p : imgPaths) {
+        if (loadMaskFromImage(p, /*targetCols=*/164, cols, rows, flat)) {
+            std::cout << "Extracted mask from image: " << p
+                      << " (" << cols << "x" << rows << ")\n";
+            loaded = true;
+            break;
+        }
+    }
+
+    // Fallback: the old pre-baked CSV mask.
     const char* candidates[] = {
         "data/output/mask_v13_seed1.csv",
         "../data/output/mask_v13_seed1.csv",
         "../../data/output/mask_v13_seed1.csv",
     };
-
-    int cols = 0, rows = 0;
-    std::vector<int> flat;
-    bool loaded = false;
     for (const char* p : candidates) {
+        if (loaded) break;
         if (loadMaskCSV(p, cols, rows, flat)) {
             std::cout << "Loaded mask: " << p << " (" << cols << "x" << rows << ")\n";
             loaded = true;
@@ -106,7 +255,7 @@ void Env::buildWorld() {
     for (int d = 1; d <= maxDomain; ++d) {
         auto& pos = positionsByDomain[d];
         if (pos.empty()) continue;
-        std::string name = "domain_" + std::to_string(d);
+        std::string name = domainName(d);
         addActivity(name, d, 1.0f / maxDomain, std::move(pos));
         domainList.push_back(d);
     }
@@ -166,15 +315,15 @@ void Env::step() {
 
             std::string msg;
             if (justSwitched) {
-                msg = "Switched to Domain " + std::to_string(room);
+                msg = std::string("Switched to ") + domainName(room);
             } else if (act == "move to domain") {
-                msg = "Moving to Domain " + std::to_string(target);
+                msg = std::string("Moving to ") + domainName(target);
             } else if (act == "working") {
-                msg = "Working in Domain " + std::to_string(room);
+                msg = std::string("Working in ") + domainName(room);
             } else if (act == "idle") {
-                msg = "Idle in Domain " + std::to_string(room);
+                msg = std::string("Idle in ") + domainName(room);
             } else if (inDomain) {
-                msg = "In Domain " + std::to_string(room);
+                msg = std::string("In ") + domainName(room);
             } else {
                 msg = "At (" + std::to_string(static_cast<int>(pos.x)) + "," +
                               std::to_string(static_cast<int>(pos.y)) + ")";
@@ -185,7 +334,7 @@ void Env::step() {
             if (inDomain) lastReportedDomain[id] = room;
 
             std::string domainStr = inDomain
-                ? "Domain " + std::to_string(room)
+                ? std::string(domainName(room))
                 : "the corridor";
 
             messageLog->queueAgentChatter(
@@ -210,6 +359,32 @@ void Env::controlAgentDomains() {
     static std::uniform_int_distribution<int> jitter(0, 39);
     std::uniform_int_distribution<int> pick(0, static_cast<int>(domainList.size()) - 1);
 
+    // ── GATHER: force every agent to the canteen until all have arrived ──────
+    if (phase == Phase::GATHER) {
+        bool allArrived = true;
+        for (Agent* agent : agents) {
+            if (agent->getTargetDomain() != canteenDomain)
+                agent->setTargetDomain(canteenDomain);
+            if (roomOf(agent->getPosition()) != canteenDomain)
+                allArrived = false;
+        }
+        if (allArrived && !agents.empty()) phase = Phase::SCATTER;
+        return; // suppress random reassignment while gathering
+    }
+
+    // ── SCATTER: everyone picks one random domain (≠ canteen) once ───────────
+    if (phase == Phase::SCATTER) {
+        for (Agent* agent : agents) {
+            int next;
+            do { next = domainList[pick(rng)]; }
+            while (next == canteenDomain && domainList.size() > 1);
+            agent->setTargetDomain(next);
+            nextChangeAt[agent->getId()] = frameCount + 50 + jitter(rng);
+        }
+        phase = Phase::NORMAL; // resume normal random reassignment afterwards
+        return;
+    }
+
     for (Agent* agent : agents) {
         int aid = agent->getId();
         auto it = nextChangeAt.find(aid);
@@ -221,6 +396,20 @@ void Env::controlAgentDomains() {
             nextChangeAt[aid] = frameCount + 50 + jitter(rng);
         }
     }
+}
+
+// Domain whose center is nearest the middle of the map (the "canteen").
+int Env::canteenMiddleDomain() const {
+    glm::vec2 mid(width * 0.5f, height * 0.5f);
+    int best = domainList.empty() ? WalkGrid::CORRIDOR : domainList.front();
+    float bestDist = 1e30f;
+    for (int d : domainList) {
+        glm::vec2 c = domainCenter(d);
+        float dx = c.x - mid.x, dy = c.y - mid.y;
+        float dist = dx * dx + dy * dy;
+        if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+    return best;
 }
 
 // Update physics and behavior for all agents
@@ -293,7 +482,8 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
     }
 
     // Layer 2: enviroment.png (detailed art) on top of the background.
-    if (envTexture) {
+    // Only in environment view; background view shows the background layer alone.
+    if (showEnvLayer && envTexture) {
         SDL_RenderCopy(renderer, envTexture, nullptr, &envArea);
     }
 
@@ -308,6 +498,24 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
     if (worldH <= 0) worldH = 600.0f;
     float scaleX = static_cast<float>(width) / worldW;
     float scaleY = static_cast<float>(height) / worldH;
+
+    // Path overlay: draw each agent's planned route (current pos -> waypoints).
+    if (showPaths) {
+        SDL_SetRenderDrawColor(renderer, 255, 230, 0, 255); // yellow path lines
+        for (const Agent* agent : agents) {
+            const std::vector<glm::vec2>& path = agent->getPath();
+            if (path.empty()) continue;
+            glm::vec2 prev = agent->getPosition();
+            for (const glm::vec2& wp : path) {
+                SDL_RenderDrawLine(renderer,
+                    x + static_cast<int>(prev.x * scaleX),
+                    y + static_cast<int>(prev.y * scaleY),
+                    x + static_cast<int>(wp.x * scaleX),
+                    y + static_cast<int>(wp.y * scaleY));
+                prev = wp;
+            }
+        }
+    }
 
     for (const Agent* agent : agents) {
         glm::vec2 pos = agent->getPosition();
@@ -399,6 +607,19 @@ std::string Env::findActivityInDomain(int domain) const {
 
 // Queue user input message
 void Env::queueUserInput(const std::string& text, int agentId) {
+    // Command detection: "sanity check" (case-insensitive) triggers the gather-
+    // then-scatter choreography. All agents walk to the canteen; once every one
+    // has arrived they each pick a random domain and disperse.
+    std::string lower = text;
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower.find("sanity check") != std::string::npos) {
+        canteenDomain = 4;            // blue domain — fixed gather point
+        phase = Phase::GATHER;
+        nextChangeAt.clear();
+        // Force every agent to retarget the canteen immediately.
+        for (Agent* agent : agents) agent->setTargetDomain(canteenDomain);
+    }
+
     if (!messageLog || agentId < 0 || agentId >= static_cast<int>(agents.size())) return;
 
     Agent* agent = agents[agentId];

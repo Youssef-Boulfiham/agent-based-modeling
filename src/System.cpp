@@ -118,6 +118,12 @@ void System::handleEvents(bool& running) {
                 break;
 
             case SDL_KEYDOWN:
+                // Copy selection: Cmd+C (mac) / Ctrl+C.
+                if (event.key.keysym.sym == SDLK_c &&
+                    (event.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
+                    uiText->copySelection();
+                    break;
+                }
                 switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE:   running = false;            break;
                     case SDLK_BACKSPACE: uiText->backspace();       break;
@@ -134,8 +140,30 @@ void System::handleEvents(bool& running) {
                 break;
 
             case SDL_MOUSEBUTTONDOWN:
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    // First top-left button toggles the env/background layer.
+                    int btn = uiButtons->hitTest(event.button.x, event.button.y);
+                    if (btn == 0) {
+                        simulation->toggleLayer();
+                        break;
+                    }
+                    if (btn == 1) {
+                        simulation->togglePaths();
+                        break;
+                    }
+                    uiText->handleMouseDown(event.button.x, event.button.y,
+                                            event.button.clicks);
+                }
+                break;
+
+            case SDL_MOUSEMOTION:
+                if (event.motion.state & SDL_BUTTON_LMASK)
+                    uiText->handleMouseDrag(event.motion.x, event.motion.y);
+                break;
+
+            case SDL_MOUSEBUTTONUP:
                 if (event.button.button == SDL_BUTTON_LEFT)
-                    uiText->handleClick(event.button.x, event.button.y);
+                    uiText->handleMouseUp();
                 break;
 
             case SDL_MOUSEWHEEL: {

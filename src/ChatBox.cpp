@@ -2,7 +2,10 @@
 #include "../include/TextRenderer.h"
 #include "../include/Env.h"
 #include "../include/MessageLog.h"
+#include "../include/TextRenderer.h"
 #include <vector>
+#include <algorithm>
+#include <cctype>
 
 namespace {
     constexpr int PAD       = 6;    // inner padding
@@ -38,21 +41,18 @@ void ChatBox::render(SDL_Renderer* renderer, int x, int y, int width, int height
 
     jumpBtn   = { x + width - PAD - jumpW, btnY, jumpW, BTN_H };
     toggleBtn = { jumpBtn.x - 8 - toggleW, btnY, toggleW, BTN_H };
-
-    SDL_SetRenderDrawColor(renderer, 45, 45, 60, 255);
-    SDL_RenderFillRect(renderer, &toggleBtn);
-    SDL_RenderFillRect(renderer, &jumpBtn);
-    SDL_SetRenderDrawColor(renderer, 120, 120, 170, 255);
-    SDL_RenderDrawRect(renderer, &toggleBtn);
-    SDL_RenderDrawRect(renderer, &jumpBtn);
-    TextRenderer::draw(renderer, toggleBtn.x + 5, toggleBtn.y + 4, toggleLabel, SCALE, 220, 220, 230);
-    TextRenderer::draw(renderer, jumpBtn.x + 5, jumpBtn.y + 4, jumpLabel, SCALE, 220, 220, 230);
+    // Buttons drawn LATER as an overlay (after the log) so they float in front of
+    // the top message row — saves the vertical strip a dedicated header would cost.
 
     // ── Log area geometry ───────────────────────────────────────────────────
-    int logTop    = y + PAD + BTN_H + 4;
+    int logTop    = y + PAD;
     int logBottom = y + height - INPUT_H - PAD;
     int logH      = logBottom - logTop;
     int visibleRows = logH > 0 ? logH / ROW_H : 0;
+
+    rowTextX = x + PAD;
+    logArea  = { x + 2, logTop, width - 4, logH };
+    visRows.clear();
 
     if (world && world->getMessageLog()) {
         const std::vector<LogEntry>& hist = world->getMessageLog()->getHistory();
@@ -72,24 +72,54 @@ void ChatBox::render(SDL_Renderer* renderer, int x, int y, int width, int height
 
         // Resolve the first visible row from the scroll model.
         //   pinned  -> base case: show the most recent page (follows new msgs).
-        //   scrolled-> hold anchorTop: an ABSOLUTE index, so messages appended
-        //              at the bottom never move the rows being read.
+        //   scrolled-> hold anchorSeq: the STABLE id of the top entry. Resolved to
+        //              an index each frame, so neither appends at the bottom nor
+        //              front-trims of the log move the rows being read.
+        // Scroll can go all the way down until ONLY the last message remains
+        // (start = total-1), past the full last page.
+        int maxStart = total > 0 ? total - 1 : 0;
+
         int start;
         if (pinnedToBottom) {
-            start = maxTop;
+            start = maxTop;   // live-follow: show the full last page
         } else {
-            if (anchorTop < 0) anchorTop = 0;
-            if (anchorTop > maxTop) anchorTop = maxTop; // can't scroll past the end
-            start = anchorTop;
+            // First row whose seq >= anchorSeq (the anchored entry, or its
+            // nearest survivor if it was trimmed off the front).
+            start = maxStart;
+            for (int i = 0; i < total; ++i) {
+                if (rows[i]->seq >= anchorSeq) { start = i; break; }
+            }
         }
+
+        // Apply queued wheel steps now that we know the row layout.
+        // (inverted scroll direction: step > 0 moves toward newer/bottom)
+        if (pendingScroll != 0) {
+            if (pinnedToBottom) start = maxTop;  // detach from live-follow base
+            pinnedToBottom = false;              // any manual scroll leaves follow
+            start += pendingScroll;
+            pendingScroll = 0;
+        }
+
+        if (start < 0) start = 0;
+        if (start > maxStart) start = maxStart;
+        if (!pinnedToBottom) anchorSeq = total > 0 ? rows[start]->seq : 0;
 
         int end = start + visibleRows;
         if (end > total) end = total;
+
+        // Normalized history selection bounds (lo <= hi by seq, then col).
+        unsigned long loSeq = histAnchorSeq, hiSeq = histFocusSeq;
+        int loCol = histAnchorCol, hiCol = histFocusCol;
+        if (loSeq > hiSeq || (loSeq == hiSeq && loCol > hiCol)) {
+            std::swap(loSeq, hiSeq); std::swap(loCol, hiCol);
+        }
+        const int adv = TextRenderer::ADVANCE * SCALE;
 
         int rowY = logTop;
         for (int i = start; i < end; ++i) {
             const LogEntry& e = *rows[i];
             bool isUser = (e.from == "user");
+            std::string text = formatRow(e);
 
             // Row background distinguishes sender (user blue, agent green).
             SDL_Rect rowRect{ x + 2, rowY - 1, width - 4, ROW_H };
@@ -97,10 +127,57 @@ void ChatBox::render(SDL_Renderer* renderer, int x, int y, int width, int height
             else        SDL_SetRenderDrawColor(renderer, 26, 42, 26, 255);
             SDL_RenderFillRect(renderer, &rowRect);
 
-            TextRenderer::draw(renderer, x + PAD, rowY, formatRow(e), SCALE, 220, 216, 200);
+            // Selection highlight for this row, if its seq is in range.
+            if (histHasSel && e.seq >= loSeq && e.seq <= hiSeq) {
+                int len = static_cast<int>(text.size());
+                int a = (e.seq == loSeq) ? loCol : 0;
+                int b = (e.seq == hiSeq) ? hiCol : len;
+                if (a < 0) a = 0; if (b > len) b = len;
+                if (b > a) {
+                    SDL_Rect hl{ rowTextX + a * adv, rowY - 1, (b - a) * adv, ROW_H };
+                    SDL_SetRenderDrawColor(renderer, 60, 90, 160, 255);
+                    SDL_RenderFillRect(renderer, &hl);
+                }
+            }
+
+            TextRenderer::draw(renderer, rowTextX, rowY, text, SCALE, 220, 216, 200);
+            visRows.push_back({ e.seq, rowY, text });
             rowY += ROW_H;
         }
+
+        // ── Scrollbar (right edge of log area) ──────────────────────────────
+        // Shown only when content overflows. Thumb size = visible fraction,
+        // thumb position = start / maxTop. Highlighted when actively scrolled.
+        if (total > visibleRows && logH > 0) {
+            const int SB_W = 3 * SCALE;
+            int trackX = x + width - SB_W - 2;
+            SDL_Rect track{ trackX, logTop, SB_W, logH };
+            SDL_SetRenderDrawColor(renderer, 30, 30, 40, 255);
+            SDL_RenderFillRect(renderer, &track);
+
+            float frac    = static_cast<float>(visibleRows) / total;
+            int thumbH    = static_cast<int>(logH * frac);
+            if (thumbH < 8) thumbH = 8;            // keep grabbable/visible
+            int travel    = logH - thumbH;
+            float pos     = maxTop > 0 ? static_cast<float>(start) / maxTop : 0.0f;
+            int thumbY    = logTop + static_cast<int>(travel * pos);
+
+            SDL_Rect thumb{ trackX, thumbY, SB_W, thumbH };
+            if (pinnedToBottom) SDL_SetRenderDrawColor(renderer, 120, 210, 130, 255); // LIVE green
+            else                SDL_SetRenderDrawColor(renderer, 230, 200, 110, 255); // SCROLLED amber
+            SDL_RenderFillRect(renderer, &thumb);
+        }
     }
+
+    // ── Header buttons overlay (float in front of the top message row) ───────
+    SDL_SetRenderDrawColor(renderer, 45, 45, 60, 255);
+    SDL_RenderFillRect(renderer, &toggleBtn);
+    SDL_RenderFillRect(renderer, &jumpBtn);
+    SDL_SetRenderDrawColor(renderer, 120, 120, 170, 255);
+    SDL_RenderDrawRect(renderer, &toggleBtn);
+    SDL_RenderDrawRect(renderer, &jumpBtn);
+    TextRenderer::draw(renderer, toggleBtn.x + 5, toggleBtn.y + 4, toggleLabel, SCALE, 220, 220, 230);
+    TextRenderer::draw(renderer, jumpBtn.x + 5, jumpBtn.y + 4, jumpLabel, SCALE, 220, 220, 230);
 
     // ── Input line (bottom) ─────────────────────────────────────────────────
     SDL_Rect inputRect{ x + 2, y + height - INPUT_H, width - 4, INPUT_H - 2 };
@@ -113,6 +190,22 @@ void ChatBox::render(SDL_Renderer* renderer, int x, int y, int width, int height
     int textX = inputRect.x + 5;
     int textY = inputRect.y + 6;
     int afterPrompt = TextRenderer::draw(renderer, textX, textY, prompt, SCALE, 150, 170, 230);
+
+    // Record input geometry for hit-testing/selection.
+    inputArea  = inputRect;
+    inputTextX = afterPrompt;
+    inputTextY = textY;
+
+    // Input selection highlight (drawn under the text).
+    if (inHasSel) {
+        int a = inAnchor, b = inFocus;
+        if (a > b) std::swap(a, b);
+        const int adv = TextRenderer::ADVANCE * SCALE;
+        SDL_Rect hl{ afterPrompt + a * adv, textY - 1, (b - a) * adv, 9 * SCALE };
+        SDL_SetRenderDrawColor(renderer, 60, 90, 160, 255);
+        SDL_RenderFillRect(renderer, &hl);
+    }
+
     TextRenderer::draw(renderer, afterPrompt, textY, input, SCALE, 230, 230, 230);
 
     // Blinking caret at the cursor position.
@@ -182,31 +275,162 @@ void ChatBox::handleClick(int mx, int my) {
     }
 }
 
+// ── Selection: position mapping ─────────────────────────────────────────────
+int ChatBox::inputColAt(int mx) const {
+    const int adv = TextRenderer::ADVANCE * SCALE;
+    int col = (mx - inputTextX + adv / 2) / adv;   // round to nearest gap
+    if (col < 0) col = 0;
+    int n = static_cast<int>(input.size());
+    if (col > n) col = n;
+    return col;
+}
+
+void ChatBox::histPosAt(int mx, int my, unsigned long& seq, int& col) const {
+    if (visRows.empty()) { seq = 0; col = 0; return; }
+    // Nearest visible row by y (clamp above-first / below-last).
+    const VisRow* best = &visRows.front();
+    for (const auto& r : visRows) {
+        if (my >= r.y - 1 && my < r.y - 1 + ROW_H) { best = &r; break; }
+        if (my >= r.y) best = &r;   // track last row whose top is above the cursor
+    }
+    seq = best->seq;
+    const int adv = TextRenderer::ADVANCE * SCALE;
+    int c = (mx - rowTextX + adv / 2) / adv;
+    int n = static_cast<int>(best->text.size());
+    if (c < 0) c = 0; if (c > n) c = n;
+    col = c;
+}
+
+void ChatBox::wordBounds(const std::string& s, int col, int& lo, int& hi) {
+    int n = static_cast<int>(s.size());
+    if (n == 0) { lo = hi = 0; return; }
+    if (col >= n) col = n - 1;
+    auto isWord = [](char c){ return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    if (!isWord(s[col])) { lo = col; hi = col + 1; return; }
+    lo = col; while (lo > 0 && isWord(s[lo - 1])) lo--;
+    hi = col; while (hi < n && isWord(s[hi])) hi++;
+}
+
+// ── Selection: mouse handling ───────────────────────────────────────────────
+void ChatBox::handleMouseDown(int mx, int my, int clicks) {
+    SDL_Point p{ mx, my };
+
+    // Buttons take priority and never start a selection.
+    if (SDL_PointInRect(&p, &toggleBtn) || SDL_PointInRect(&p, &jumpBtn)) {
+        handleClick(mx, my);
+        return;
+    }
+
+    if (SDL_PointInRect(&p, &inputArea)) {
+        // ── Input region (independent of history) ──
+        selRegion = SelRegion::Input;
+        histHasSel = false;
+        int col = inputColAt(mx);
+        int n = static_cast<int>(input.size());
+        if (clicks >= 3) {                       // triple-click: whole line
+            inAnchor = 0; inFocus = n; inHasSel = (n > 0); dragging = false;
+        } else if (clicks == 2) {                // double-click: word
+            int lo, hi; wordBounds(input, col, lo, hi);
+            inAnchor = lo; inFocus = hi; inHasSel = (hi > lo); dragging = false;
+        } else {                                 // single: place caret, start drag
+            cursor = col; inAnchor = inFocus = col; inHasSel = false; dragging = true;
+        }
+        return;
+    }
+
+    if (SDL_PointInRect(&p, &logArea)) {
+        // ── History region (independent of input) ──
+        selRegion = SelRegion::History;
+        inHasSel = false;
+        unsigned long seq; int col;
+        histPosAt(mx, my, seq, col);
+        // Find the row text for word/line ops.
+        const std::string* rowText = nullptr;
+        for (const auto& r : visRows) if (r.seq == seq) { rowText = &r.text; break; }
+        int n = rowText ? static_cast<int>(rowText->size()) : 0;
+        if (clicks >= 3) {                       // triple: whole row
+            histAnchorSeq = histFocusSeq = seq;
+            histAnchorCol = 0; histFocusCol = n; histHasSel = (n > 0); dragging = false;
+        } else if (clicks == 2 && rowText) {     // double: word
+            int lo, hi; wordBounds(*rowText, col, lo, hi);
+            histAnchorSeq = histFocusSeq = seq;
+            histAnchorCol = lo; histFocusCol = hi; histHasSel = (hi > lo); dragging = false;
+        } else {                                 // single: start drag
+            histAnchorSeq = histFocusSeq = seq;
+            histAnchorCol = histFocusCol = col; histHasSel = false; dragging = true;
+        }
+        return;
+    }
+
+    // Clicked elsewhere: clear selections.
+    histHasSel = inHasSel = false;
+    selRegion = SelRegion::None;
+}
+
+void ChatBox::handleMouseDrag(int mx, int my) {
+    if (!dragging) return;
+    if (selRegion == SelRegion::Input) {
+        inFocus = inputColAt(mx);
+        inHasSel = (inFocus != inAnchor);
+    } else if (selRegion == SelRegion::History) {
+        unsigned long seq; int col;
+        histPosAt(mx, my, seq, col);
+        histFocusSeq = seq; histFocusCol = col;
+        histHasSel = !(histFocusSeq == histAnchorSeq && histFocusCol == histAnchorCol);
+    }
+}
+
+void ChatBox::handleMouseUp() {
+    dragging = false;
+}
+
+// ── Selection: copy to clipboard ────────────────────────────────────────────
+void ChatBox::copySelection() {
+    std::string out;
+
+    if (selRegion == SelRegion::Input && inHasSel) {
+        int a = inAnchor, b = inFocus;
+        if (a > b) std::swap(a, b);
+        a = std::max(0, a); b = std::min<int>(b, input.size());
+        if (b > a) out = input.substr(a, b - a);
+    } else if (selRegion == SelRegion::History && histHasSel && world && world->getMessageLog()) {
+        unsigned long loSeq = histAnchorSeq, hiSeq = histFocusSeq;
+        int loCol = histAnchorCol, hiCol = histFocusCol;
+        if (loSeq > hiSeq || (loSeq == hiSeq && loCol > hiCol)) {
+            std::swap(loSeq, hiSeq); std::swap(loCol, hiCol);
+        }
+        // Rebuild the same filtered row set used for display, pull seq range.
+        const std::vector<LogEntry>& hist = world->getMessageLog()->getHistory();
+        bool first = true;
+        for (const auto& e : hist) {
+            bool agentToAgent = (e.from != "user" && e.to != "user");
+            if (!showAgentAgent && agentToAgent) continue;
+            if (e.seq < loSeq || e.seq > hiSeq) continue;
+            std::string text = formatRow(e);
+            int len = static_cast<int>(text.size());
+            int a = (e.seq == loSeq) ? loCol : 0;
+            int b = (e.seq == hiSeq) ? hiCol : len;
+            if (a < 0) a = 0; if (b > len) b = len;
+            if (!first) out += "\n";
+            if (b > a) out += text.substr(a, b - a);
+            first = false;
+        }
+    }
+
+    if (!out.empty()) SDL_SetClipboardText(out.c_str());
+}
+
 void ChatBox::scroll(float dy) {
     // Accumulate fractional wheel deltas (a trackpad sends many tiny values, and
-    // wheel.y is often 0). Only act on whole-row steps; this also cancels jitter
-    // so a stray opposite tick can't accidentally re-pin to the bottom.
+    // wheel.y is often 0). Act only on whole-row steps; the accumulator cancels
+    // jitter.
     scrollAccum += dy;
     int step = static_cast<int>(scrollAccum);   // truncate toward zero
     if (step == 0) return;
     scrollAccum -= step;
 
-    if (step > 0) {
-        // Scrolling up = look back in history. Leave the bottom and lock an
-        // absolute anchor so new messages can never move the read position.
-        if (pinnedToBottom) {
-            pinnedToBottom = false;
-            anchorTop = lastMaxTop;   // top row of the latest page (from render)
-        }
-        anchorTop -= step;
-        if (anchorTop < 0) anchorTop = 0;
-    } else { // step < 0 : scrolling down toward the latest
-        if (!pinnedToBottom) {
-            anchorTop += -step;
-            if (anchorTop >= lastMaxTop) {   // reached the end -> follow latest
-                pinnedToBottom = true;
-                anchorTop = lastMaxTop;
-            }
-        }
-    }
+    // Queue whole-row steps. render() applies them against the current row layout
+    // and re-anchors on the top entry's stable seq (or re-pins if it lands on the
+    // latest page). Doing it there keeps the anchor immune to log front-trims.
+    pendingScroll += step;            // step > 0 = up = older
 }

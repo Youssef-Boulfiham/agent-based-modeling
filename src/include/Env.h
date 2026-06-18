@@ -42,6 +42,14 @@ private:
     SDL_Texture* envTexture = nullptr;
     bool texturesTried = false;
 
+    // Layer view toggle (first top-left button switches it).
+    //   true  -> environment view: background + enviroment art on top
+    //   false -> background view:  background layer only
+    bool showEnvLayer = true;
+    // Path overlay toggle (second top-left button): draw each agent's planned
+    // route so you can see where they are going and debug walkable-area issues.
+    bool showPaths = false;
+
     void buildWorld();
     void loadTextures(SDL_Renderer* renderer);
 
@@ -50,6 +58,15 @@ private:
     void controlAgentDomains();
     std::vector<int> domainList;            // domains available for assignment
     std::unordered_map<int, int> nextChangeAt; // agentId -> frame of next domain change
+
+    // "sanity check" choreography. NORMAL = per-agent random reassign (default).
+    // GATHER = all agents forced to the canteen (geometric-middle domain) until
+    // every agent has arrived. SCATTER = each agent picks one random domain once,
+    // then we fall back to NORMAL.
+    enum class Phase { NORMAL, GATHER, SCATTER };
+    Phase phase = Phase::NORMAL;
+    int canteenDomain = WalkGrid::CORRIDOR; // gather target, chosen when GATHER begins
+    int canteenMiddleDomain() const;        // domain whose center is nearest map middle
 
     // Message logging and priority queue
     MessageLog* messageLog;
@@ -65,6 +82,12 @@ public:
     void render();
     void renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height);
     void cleanup();
+
+    // Switch between environment layer and background layer.
+    void toggleLayer() { showEnvLayer = !showEnvLayer; }
+
+    // Show/hide agent path overlay.
+    void togglePaths() { showPaths = !showPaths; }
 
     void addAgent(glm::vec2 position);
     void removeAgent(int index);

@@ -56,8 +56,8 @@ void Agent::step(float /*deltaTime*/) {
         if (path.empty()) {
             routeToDomain(targetDomain);
         }
-        // Move one cell toward goal
-        if (!path.empty()) {
+        // Move one cell toward goal (slowed by 40%)
+        if (!path.empty() && uniform01() < 0.6f) {
             positionCurrent = path.front();
             path.erase(path.begin());
             position = positionCurrent;
@@ -87,7 +87,7 @@ void Agent::step(float /*deltaTime*/) {
     if (path.empty()) {
         path = bfs(positionCurrent, pickPosition());
     }
-    if (!path.empty()) {
+    if (!path.empty() && uniform01() < 0.6f) {
         positionCurrent = path.front();
         path.erase(path.begin());
         position = positionCurrent;
@@ -199,8 +199,11 @@ void Agent::routeTo(glm::vec2 goal) {
 void Agent::routeToDomain(int domain) {
     glm::vec2 goal = world->domainCenter(domain);
     const WalkGrid& grid = world->getWalkGrid();
-    // Allow corridor + target domain
-    std::vector<int> allowed = {domain};
+    // Route over any walkable (non-BLOCKED) cell — matches the sandbox reference
+    // bfs() which has no domain filter. A restricted {domain} filter traps an
+    // agent in the interior of its current domain (its own cells aren't allowed),
+    // leaving it frozen in "move to domain". Empty filter => all walkable.
+    std::vector<int> allowed = {};
     Path p = Pathfinding::findPath(positionCurrent, goal, grid, allowed);
     if (p.found) {
         path.insert(path.end(), p.waypoints.begin(), p.waypoints.end());
