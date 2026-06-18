@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Bake the extracted mask into a self-contained interactive HTML front-end.
+
+The page runs A* in-browser and animates ONE agent making an endless series of
+random domain->domain trips through the corridors, proving the mask is a usable
+navigation layer. Open the output file in any browser; no server needed.
+"""
+import json
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[3]
+OUTPUT = ROOT / "data" / "output"
+HERE = Path(__file__).resolve().parent
+
+
+def main(name="v13_seed1"):
+    grid = np.loadtxt(OUTPUT / f"mask_{name}.csv", dtype=int, delimiter=",")
+    meta = json.loads((OUTPUT / f"mask_{name}.json").read_text())
+    rows, cols = grid.shape
+    colors = meta["domain_colors"]  # "0"=corridor, "1".."7"=rooms
+
+    flat = ",".join(str(int(v)) for v in grid.ravel())
+    html = TEMPLATE.replace("__ROWS__", str(rows)) \
+                   .replace("__COLS__", str(cols)) \
+                   .replace("__GRID__", flat) \
+                   .replace("__COLORS__", json.dumps(colors)) \
+                   .replace("__NAME__", name)
+    out = HERE / "index.html"   # index.html so `python3 -m http.server` serves it at /
+    out.write_text(html)
+    print(f"wrote {out.relative_to(ROOT)}  ({rows}x{cols} mask baked in)")
+
+
+TEMPLATE = r"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>ABM mask navigation — __NAME__</title>
+<style>
+  body{margin:0;background:#14141a;color:#e8e4dc;font:14px system-ui,sans-serif;
+       display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px}
+  canvas{background:#14141a;border:1px solid #333;border-radius:6px;max-width:100%}
+  #hud{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .pill{background:#23232c;padding:4px 10px;border-radius:12px}
+  button{background:#2d6cdf;color:#fff;border:0;padding:6px 12px;border-radius:6px;cursor:pointer}
+  #legend{display:flex;gap:8px;flex-wrap:wrap}
+  .lg{display:flex;align-items:center;gap:4px}.sw{width:12px;height:12px;border-radius:2px}
+</style></head><body>
+<h3 style="margin:4px">Mask navigation proof — agent walks corridors between domains</h3>
+<div id="hud">
+  <span class="pill">trip <b id="trip">0</b></span>
+  <span class="pill"><b id="route"></b></span>
+  <span class="pill">path len <b id="plen">0</b></span>
+  <span class="pill">success <b id="ok">0</b>/<b id="tot">0</b></span>
+  <button id="toggle">pause</button>
+  <button id="speed">speed x1</button>
+</div>
+<div id="legend"></div>
+<canvas id="cv"></canvas>
+<script>
+const ROWS=__ROWS__, COLS=__COLS__, CELL=6;
+const GRID=Int16Array.from("__GRID__".split(",").map(Number));
+const COLORS=__COLORS__;
+const at=(r,c)=>GRID[r*COLS+c];
+const walk=(r,c)=>r>=0&&c>=0&&r<ROWS&&c<COLS&&GRID[r*COLS+c]>=0;
+const NEI=[[-1,0],[1,0],[0,-1],[0,1]];
+
+// ---- A* (4-dir, binary-heap-free simple version) ----
+function astar(s,g){
+  const key=(r,c)=>r*COLS+c;
+  const open=new Map(), came=new Map(), gsc=new Map();
+  gsc.set(key(...s),0); open.set(key(...s),manh(s,g));
+  while(open.size){
+    let bk=-1,bf=1e18;
+    for(const [k,f] of open) if(f<bf){bf=f;bk=k;}
+    open.delete(bk);
+    const cr=(bk/COLS)|0, cc=bk%COLS;
+    if(cr===g[0]&&cc===g[1]){ // reconstruct
+      let path=[[cr,cc]],k=bk;
+      while(came.has(k)){k=came.get(k);path.push([(k/COLS)|0,k%COLS]);}
+      return path.reverse();
+    }
+    for(const [dy,dx] of NEI){const nr=cr+dy,nc=cc+dx;
+      if(!walk(nr,nc))continue;
+      const nk=key(nr,nc), ng=gsc.get(bk)+1;
+      if(ng<(gsc.has(nk)?gsc.get(nk):1e18)){
+        came.set(nk,bk);gsc.set(nk,ng);
+        open.set(nk,ng+manh([nr,nc],g));
+      }
+    }
+  }
+  return null;
+}
+const manh=(a,b)=>Math.abs(a[0]-b[0])+Math.abs(a[1]-b[1]);
+
+// ---- domain centroids (spawn/target points) ----
+const NDOM=Math.max(...GRID);
+const cents={};
+for(let d=1;d<=NDOM;d++){
+  let sy=0,sx=0,n=0,cells=[];
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(at(r,c)===d){sy+=r;sx+=c;n++;cells.push([r,c]);}
+  const cy=sy/n,cx=sx/n;
+  let best=cells[0],bd=1e18;
+  for(const[r,c]of cells){const dd=(r-cy)**2+(c-cx)**2;if(dd<bd){bd=dd;best=[r,c];}}
+  cents[d]=best;
+}
+
+// ---- render ----
+const cv=document.getElementById('cv');cv.width=COLS*CELL;cv.height=ROWS*CELL;
+const ctx=cv.getContext('2d');
+function baseDraw(dim){
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const v=at(r,c);let col;
+    if(v===-1)col='#14141a';
+    else if(v===0)col='#e6decd';
+    else{const rgb=COLORS[v];col=`rgb(${Math.round(rgb[0]*dim+70)},${Math.round(rgb[1]*dim+70)},${Math.round(rgb[2]*dim+70)})`;}
+    ctx.fillStyle=col;ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+  }
+}
+// legend
+const lg=document.getElementById('legend');
+lg.innerHTML='<div class="lg"><span class="sw" style="background:#e6decd"></span>corridor</div>'+
+  Array.from({length:NDOM},(_,i)=>{const d=i+1,c=COLORS[d];
+    return `<div class="lg"><span class="sw" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span>domain ${d}</div>`;}).join('');
+
+// ---- simulation: 1 agent, endless random domain->domain trips ----
+let trip=0,okN=0,totN=0,path=null,idx=0,trail=[],SPEED=1,running=true;
+function newTrip(){
+  let a=1+(Math.random()*NDOM|0), b;
+  do{b=1+(Math.random()*NDOM|0);}while(b===a);
+  path=astar(cents[a],cents[b]);
+  totN++;trip++;idx=0;trail=[];
+  document.getElementById('trip').textContent=trip;
+  document.getElementById('route').textContent=`domain ${a} → ${b}`;
+  document.getElementById('tot').textContent=totN;
+  if(path){okN++;document.getElementById('plen').textContent=path.length;}
+  else{document.getElementById('plen').textContent='NO PATH';}
+  document.getElementById('ok').textContent=okN;
+}
+function frame(){
+  if(running){
+    baseDraw(0.45);
+    if(path){
+      // draw full route faint
+      ctx.fillStyle='rgba(255,255,255,.18)';
+      for(const[r,c]of path)ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+      for(let s=0;s<SPEED;s++){if(idx<path.length){trail.push(path[idx]);idx++;}}
+      // travelled trail
+      ctx.fillStyle='rgba(255,90,60,.55)';
+      for(const[r,c]of trail)ctx.fillRect(c*CELL,r*CELL,CELL,CELL);
+      // agent
+      const p=path[Math.min(idx,path.length-1)];
+      ctx.fillStyle='#ff3322';ctx.beginPath();
+      ctx.arc(p[1]*CELL+CELL/2,p[0]*CELL+CELL/2,CELL*1.3,0,7);ctx.fill();
+      if(idx>=path.length)setTimeout(newTrip,250);
+    }else setTimeout(newTrip,200);
+  }
+  requestAnimationFrame(frame);
+}
+document.getElementById('toggle').onclick=e=>{running=!running;e.target.textContent=running?'pause':'resume';};
+document.getElementById('speed').onclick=e=>{SPEED=SPEED>=4?1:SPEED*2;e.target.textContent='speed x'+SPEED;};
+newTrip();frame();
+</script></body></html>
+"""
+
+if __name__ == "__main__":
+    main()
