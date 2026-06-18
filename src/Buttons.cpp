@@ -1,4 +1,5 @@
 #include "../include/Buttons.h"
+#include "../include/Env.h"
 
 UIButtons::UIButtons() {}
 
@@ -27,4 +28,14 @@ int UIButtons::hitTest(int x, int y) const {
             return i;
     }
     return -1;
+}
+
+// Map each button to its simulation action. Returns true if a button was hit.
+bool UIButtons::handleClick(int x, int y, Env* sim) {
+    if (!sim) return false;
+    switch (hitTest(x, y)) {
+        case 0: sim->toggleLayer(); return true;   // env / background layer
+        case 1: sim->togglePaths(); return true;   // agent path overlay
+        default: return false;
+    }
 }

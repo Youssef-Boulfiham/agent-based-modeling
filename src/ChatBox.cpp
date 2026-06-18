@@ -434,3 +434,65 @@ void ChatBox::scroll(float dy) {
     // latest page). Doing it there keeps the anchor immune to log front-trims.
     pendingScroll += step;            // step > 0 = up = older
 }
+
+// ── Event routing ───────────────────────────────────────────────────────────
+// One entry point for all chat-panel input. System forwards every non-system
+// SDL event here; types the panel does not care about fall through harmlessly.
+void ChatBox::handleEvent(const SDL_Event& event) {
+    switch (event.type) {
+        case SDL_TEXTINPUT:
+            // Printable characters typed into the chat input.
+            insertText(event.text.text);
+            break;
+
+        case SDL_KEYDOWN:
+            // Copy selection: Cmd+C (mac) / Ctrl+C.
+            if (event.key.keysym.sym == SDLK_c &&
+                (event.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
+                copySelection();
+                break;
+            }
+            switch (event.key.keysym.sym) {
+                case SDLK_BACKSPACE: backspace();       break;
+                case SDLK_DELETE:    del();             break;
+                case SDLK_LEFT:      moveCursorLeft();  break;
+                case SDLK_RIGHT:     moveCursorRight(); break;
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER:  submit();          break;
+                // Keyboard scroll (reliable, independent of mouse wheel).
+                case SDLK_PAGEUP:    scroll(3.0f);      break;
+                case SDLK_PAGEDOWN:  scroll(-3.0f);     break;
+                default: break;
+            }
+            break;
+
+        case SDL_MOUSEBUTTONDOWN:
+            if (event.button.button == SDL_BUTTON_LEFT)
+                handleMouseDown(event.button.x, event.button.y, event.button.clicks);
+            break;
+
+        case SDL_MOUSEMOTION:
+            if (event.motion.state & SDL_BUTTON_LMASK)
+                handleMouseDrag(event.motion.x, event.motion.y);
+            break;
+
+        case SDL_MOUSEBUTTONUP:
+            if (event.button.button == SDL_BUTTON_LEFT)
+                handleMouseUp();
+            break;
+
+        case SDL_MOUSEWHEEL: {
+            // Precise delta (trackpads report fractions; wheel.y often 0).
+            // Normalize natural-scroll so dy > 0 is always "up".
+            float dy = event.wheel.preciseY != 0.0f
+                         ? event.wheel.preciseY
+                         : static_cast<float>(event.wheel.y);
+            if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) dy = -dy;
+            scroll(dy);
+            break;
+        }
+
+        default:
+            break;
+    }
+}

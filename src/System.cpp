@@ -107,79 +107,21 @@ void System::handleEvents(bool& running) {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
-        switch (event.type) {
-            case SDL_QUIT:
-                running = false;
-                break;
-
-            case SDL_TEXTINPUT:
-                // Printable characters typed into the chat input.
-                uiText->insertText(event.text.text);
-                break;
-
-            case SDL_KEYDOWN:
-                // Copy selection: Cmd+C (mac) / Ctrl+C.
-                if (event.key.keysym.sym == SDLK_c &&
-                    (event.key.keysym.mod & (KMOD_GUI | KMOD_CTRL))) {
-                    uiText->copySelection();
-                    break;
-                }
-                switch (event.key.keysym.sym) {
-                    case SDLK_ESCAPE:   running = false;            break;
-                    case SDLK_BACKSPACE: uiText->backspace();       break;
-                    case SDLK_DELETE:    uiText->del();             break;
-                    case SDLK_LEFT:      uiText->moveCursorLeft();  break;
-                    case SDLK_RIGHT:     uiText->moveCursorRight(); break;
-                    case SDLK_RETURN:
-                    case SDLK_KP_ENTER:  uiText->submit();          break;
-                    // Keyboard scroll (reliable, independent of mouse wheel).
-                    case SDLK_PAGEUP:    uiText->scroll(3.0f);      break;
-                    case SDLK_PAGEDOWN:  uiText->scroll(-3.0f);     break;
-                    default: break;
-                }
-                break;
-
-            case SDL_MOUSEBUTTONDOWN:
-                if (event.button.button == SDL_BUTTON_LEFT) {
-                    // First top-left button toggles the env/background layer.
-                    int btn = uiButtons->hitTest(event.button.x, event.button.y);
-                    if (btn == 0) {
-                        simulation->toggleLayer();
-                        break;
-                    }
-                    if (btn == 1) {
-                        simulation->togglePaths();
-                        break;
-                    }
-                    uiText->handleMouseDown(event.button.x, event.button.y,
-                                            event.button.clicks);
-                }
-                break;
-
-            case SDL_MOUSEMOTION:
-                if (event.motion.state & SDL_BUTTON_LMASK)
-                    uiText->handleMouseDrag(event.motion.x, event.motion.y);
-                break;
-
-            case SDL_MOUSEBUTTONUP:
-                if (event.button.button == SDL_BUTTON_LEFT)
-                    uiText->handleMouseUp();
-                break;
-
-            case SDL_MOUSEWHEEL: {
-                // Use the precise delta (trackpads report fractions; wheel.y is
-                // often 0). Normalize natural-scroll so dy > 0 is always "up".
-                float dy = event.wheel.preciseY != 0.0f
-                             ? event.wheel.preciseY
-                             : static_cast<float>(event.wheel.y);
-                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) dy = -dy;
-                uiText->scroll(dy);
-                break;
-            }
-
-            default:
-                break;
+        // System-level events handled here; everything else (text input, editing
+        // keys, mouse, wheel) is owned by the ChatBox.
+        if (event.type == SDL_QUIT ||
+            (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)) {
+            running = false;
+            continue;
         }
+
+        // Top-bar buttons get first dibs on a left click.
+        if (event.type == SDL_MOUSEBUTTONDOWN &&
+            event.button.button == SDL_BUTTON_LEFT &&
+            uiButtons->handleClick(event.button.x, event.button.y, simulation))
+            continue;
+
+        uiText->handleEvent(event);
     }
 }
 

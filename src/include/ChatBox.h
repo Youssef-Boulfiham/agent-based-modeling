@@ -72,6 +72,10 @@ public:
     void setWorld(Env* w) { world = w; }
     void render(SDL_Renderer* renderer, int x, int y, int width, int height);
 
+    // Single entry point: route one SDL event (text input, editing keys, mouse,
+    // wheel) to the right handler. System forwards every non-system event here.
+    void handleEvent(const SDL_Event& event);
+
     // Input editing
     void insertText(const char* text);
     void backspace();
