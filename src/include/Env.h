@@ -54,6 +54,16 @@ private:
     // route so you can see where they are going and debug walkable-area issues.
     bool showPaths = false;
 
+    // --- Environment camera (zoom + pan) — env window ONLY ---
+    // 3 zoom levels: factor 1x / 2x / 3x. The visible window is always clamped
+    // inside the map so map art (textures) and agents share one transform and
+    // stay calibrated. viewX/viewY are the normalized [0,1] top-left of the
+    // visible window; visible fraction of the map = 1/(zoomLevel+1).
+    int   zoomLevel = 0;                 // 0..MAX_ZOOM_LEVEL
+    float viewX = 0.0f, viewY = 0.0f;    // normalized top-left of visible window
+    static constexpr int MAX_ZOOM_LEVEL = 2;
+    void clampView();
+
     void buildWorld();
     void loadTextures(SDL_Renderer* renderer);
 
@@ -92,6 +102,13 @@ public:
 
     // Show/hide agent path overlay.
     void togglePaths() { showPaths = !showPaths; }
+
+    // Env camera: last rendered env-window rect (for hit-testing scroll/drag).
+    SDL_Rect getEnvArea() const { return envArea; }
+    // Scroll-to-zoom: dir > 0 zooms in, dir < 0 zooms out, focused on cursor.
+    void zoomAt(int dir, int mouseX, int mouseY);
+    // Click-and-drag pan (grab the map). Pixel delta of the mouse this frame.
+    void panByPixels(int dx, int dy);
 
     void addAgent(glm::vec2 position);
     void removeAgent(int index);

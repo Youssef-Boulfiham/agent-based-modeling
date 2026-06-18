@@ -23,7 +23,9 @@ private:
     static constexpr float WORLD_WIDTH = 800.0f;
     static constexpr float WORLD_HEIGHT = 600.0f;
     static constexpr int MAX_AGENTS = 10;
-    static constexpr float FRAME_TIME = 1.0f / 60.0f;
+    // Sim tick interval in real seconds = THE agent-speed knob.
+    // Bigger value -> fewer ticks/sec -> slower agents. Smaller -> faster.
+    static constexpr float FRAME_TIME = 1.0f / 12.0f;
     static constexpr int MARGIN = 20;
     static constexpr int BUTTON_BAR_HEIGHT = 70;
     static constexpr int RIGHT_PANEL_WIDTH = 300;
@@ -40,6 +42,10 @@ private:
     UIButtons* uiButtons;
     Statistics* uiStats;
     ChatBox* uiText;
+
+    // Env-window camera drag state (click-and-drag to pan).
+    bool panningEnv = false;
+    int  lastMouseX = 0, lastMouseY = 0;
 
     // Helpers
     bool initSDL();

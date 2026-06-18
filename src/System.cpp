@@ -121,6 +121,48 @@ void System::handleEvents(bool& running) {
             uiButtons->handleClick(event.button.x, event.button.y, simulation))
             continue;
 
+        // Env window owns scroll-to-zoom and click-and-drag pan when the
+        // pointer is over it. Everything else falls through to the ChatBox.
+        SDL_Rect env = simulation->getEnvArea();
+        auto inEnv = [&](int px, int py) {
+            return px >= env.x && px < env.x + env.w &&
+                   py >= env.y && py < env.y + env.h;
+        };
+
+        if (event.type == SDL_MOUSEWHEEL) {
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            if (inEnv(mx, my)) {
+                float dy = event.wheel.preciseY != 0.0f
+                             ? event.wheel.preciseY
+                             : static_cast<float>(event.wheel.y);
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) dy = -dy;
+                if (dy != 0.0f) simulation->zoomAt(dy > 0 ? +1 : -1, mx, my);
+                continue;   // consume: don't scroll the ChatBox
+            }
+        }
+
+        if (event.type == SDL_MOUSEBUTTONDOWN &&
+            event.button.button == SDL_BUTTON_LEFT &&
+            inEnv(event.button.x, event.button.y)) {
+            panningEnv = true;
+            lastMouseX = event.button.x;
+            lastMouseY = event.button.y;
+            continue;
+        }
+        if (event.type == SDL_MOUSEMOTION && panningEnv) {
+            simulation->panByPixels(event.motion.x - lastMouseX,
+                                    event.motion.y - lastMouseY);
+            lastMouseX = event.motion.x;
+            lastMouseY = event.motion.y;
+            continue;
+        }
+        if (event.type == SDL_MOUSEBUTTONUP &&
+            event.button.button == SDL_BUTTON_LEFT && panningEnv) {
+            panningEnv = false;
+            continue;
+        }
+
         uiText->handleEvent(event);
     }
 }
@@ -131,21 +173,41 @@ void System::run() {
     bool running = true;
     int frameCount = 0;
 
+    // Fixed-timestep loop. The sim advances exactly one tick per FRAME_TIME of
+    // REAL time — independent of how long rendering or pathfinding takes that
+    // frame. FRAME_TIME is the single knob: it sets agent speed for all time.
+    // Without this, speed = framerate, so heavy frames (e.g. mass A* on a sanity
+    // check) made agents crawl while light frames made them zip.
+    using clock = std::chrono::steady_clock;
+    auto previous = clock::now();
+    double accumulator = 0.0;
+
     while (running) {
         handleEvents(running);
 
-        simulation->update(FRAME_TIME);
-        simulation->step();
-        frameCount++;
+        auto now = clock::now();
+        double frameSeconds = std::chrono::duration<double>(now - previous).count();
+        previous = now;
+        // Clamp to stop a spiral of death after a long stall (debugger, drag).
+        if (frameSeconds > 0.25) frameSeconds = 0.25;
+        accumulator += frameSeconds;
+
+        while (accumulator >= FRAME_TIME) {
+            simulation->update(FRAME_TIME);
+            simulation->step();
+            accumulator -= FRAME_TIME;
+            frameCount++;
+
+            if (frameCount % 60 == 0) {
+                std::cout << "Frame: " << frameCount
+                          << " | Agents: " << simulation->getActiveAgents() << "\n";
+            }
+        }
 
         render();
 
-        if (frameCount % 60 == 0) {
-            std::cout << "Frame: " << frameCount
-                      << " | Agents: " << simulation->getActiveAgents() << "\n";
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        // Yield so the loop does not busy-spin at 100% CPU between ticks.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
     std::cout << "\nSimulation stopped\n";
