@@ -16,8 +16,16 @@ private:
 
     std::string input;          // current input buffer
     int cursor = 0;             // cursor index within input [0..input.size()]
-    int scrollOffset = 0;       // rows scrolled up from the bottom (0 = latest)
-    int lastTotal = 0;          // filtered row count seen last render (anchor scroll)
+
+    // Scroll model: an ABSOLUTE anchor. When pinned, the view follows the latest
+    // message (base case). When the user scrolls up, pinned=false and anchorTop
+    // holds the index of the row at the top of the viewport. Because the anchor
+    // is absolute, new messages appended at the bottom do NOT move the rows the
+    // user is reading — they stay locked in place.
+    bool pinnedToBottom = true; // true = follow latest; false = locked at anchorTop
+    int  anchorTop = 0;         // index of the row shown at the top of the viewport
+    int  lastMaxTop = 0;        // top index of the latest page (updated each render)
+
     bool showAgentAgent = true; // filter toggle for agent-to-agent chatter
     int userMsgCount = 0;       // rotates which agent a user message targets
 

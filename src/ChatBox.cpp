@@ -67,21 +67,22 @@ void ChatBox::render(SDL_Renderer* renderer, int x, int y, int width, int height
         }
 
         int total = static_cast<int>(rows.size());
+        int maxTop = total > visibleRows ? total - visibleRows : 0;
+        lastMaxTop = maxTop;   // remember the latest page top for scroll()
 
-        // Anchor the view: if new messages arrived while the user is scrolled up
-        // (scrollOffset > 0), push the offset up by the same amount so the rows
-        // being read stay put instead of sliding down.
-        if (scrollOffset > 0 && total > lastTotal) {
-            scrollOffset += total - lastTotal;
+        // Resolve the first visible row from the scroll model.
+        //   pinned  -> base case: show the most recent page (follows new msgs).
+        //   scrolled-> hold anchorTop: an ABSOLUTE index, so messages appended
+        //              at the bottom never move the rows being read.
+        int start;
+        if (pinnedToBottom) {
+            start = maxTop;
+        } else {
+            if (anchorTop < 0) anchorTop = 0;
+            if (anchorTop > maxTop) anchorTop = maxTop; // can't scroll past the end
+            start = anchorTop;
         }
-        lastTotal = total;
 
-        if (scrollOffset < 0) scrollOffset = 0;
-        int maxOffset = total > visibleRows ? total - visibleRows : 0;
-        if (scrollOffset > maxOffset) scrollOffset = maxOffset;
-
-        int start = total - visibleRows - scrollOffset;
-        if (start < 0) start = 0;
         int end = start + visibleRows;
         if (end > total) end = total;
 
@@ -166,7 +167,7 @@ void ChatBox::submit() {
     userMsgCount++;
     input.clear();
     cursor = 0;
-    scrollOffset = 0; // snap to latest after sending
+    pinnedToBottom = true; // snap to latest after sending
 }
 
 void ChatBox::handleClick(int mx, int my) {
@@ -176,13 +177,26 @@ void ChatBox::handleClick(int mx, int my) {
         return;
     }
     if (SDL_PointInRect(&p, &jumpBtn)) {
-        scrollOffset = 0;
+        pinnedToBottom = true; // jump to bottom: follow the latest again
         return;
     }
 }
 
 void ChatBox::scroll(int dy) {
-    // dy > 0 = wheel up = look back in history.
-    scrollOffset += dy;
-    if (scrollOffset < 0) scrollOffset = 0;
+    // dy > 0 = wheel up = look back in history; dy < 0 = scroll toward latest.
+    if (dy > 0) {
+        // Leaving the bottom: seed the anchor from the current bottom page so the
+        // first scroll-up step starts exactly where the view is now.
+        if (pinnedToBottom) {
+            pinnedToBottom = false;
+            anchorTop = lastMaxTop; // top row of the latest page (set in render)
+        }
+        anchorTop -= dy;
+        if (anchorTop < 0) anchorTop = 0;
+    } else if (dy < 0) {
+        if (!pinnedToBottom) {
+            anchorTop -= dy;            // dy negative -> move down
+            if (anchorTop >= lastMaxTop) pinnedToBottom = true; // reached the end
+        }
+    }
 }
