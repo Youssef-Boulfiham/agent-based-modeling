@@ -3,7 +3,9 @@
 
 #include "Agent.h"
 #include "Pathfinding.h"
+#include "MessageLog.h"
 #include <SDL2/SDL.h>
+#include <string>
 #include <vector>
 #include <unordered_map>
 #include <glm/glm.hpp>
@@ -32,13 +34,25 @@ private:
 
     SDL_Rect envArea;
 
+    // Visual layers (loaded lazily on first render).
+    //   background.png  -> behind  (the navigation map / domains)
+    //   enviroment.png  -> on top of background (detailed art)
+    //   agents          -> drawn last
+    SDL_Texture* bgTexture = nullptr;
+    SDL_Texture* envTexture = nullptr;
+    bool texturesTried = false;
+
     void buildWorld();
+    void loadTextures(SDL_Renderer* renderer);
 
     // External domain controller: per spec, target domain is set externally and
     // re-checked each step. Reassigns each agent a new target domain at intervals.
     void controlAgentDomains();
     std::vector<int> domainList;            // domains available for assignment
     std::unordered_map<int, int> nextChangeAt; // agentId -> frame of next domain change
+
+    // Message logging and priority queue
+    MessageLog* messageLog;
 
 public:
     Env(float w, float h, int maxAgents);
@@ -89,6 +103,10 @@ public:
 
     void setRunning(bool running) { isRunning = running; }
     void setDeltaTime(float dt) { deltaTime = dt; }
+
+    // Message logging interface
+    MessageLog* getMessageLog() const { return messageLog; }
+    void queueUserInput(const std::string& text, int agentId);
 };
 
 #endif // ENV_H

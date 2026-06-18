@@ -10,6 +10,7 @@ endif()
 
 find_package(glm REQUIRED)
 find_package(SDL2 REQUIRED)
+find_package(SDL2_image REQUIRED)
 
 set(SOURCES
     main.cpp
@@ -20,6 +21,7 @@ set(SOURCES
     src/Buttons.cpp
     src/Statistics.cpp
     src/ChatBox.cpp
+    src/MessageLog.cpp
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -32,6 +34,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     glm::glm
     SDL2::SDL2
+    SDL2_image::SDL2_image
 )
 
 if(APPLE)
