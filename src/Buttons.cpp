@@ -1,7 +1,10 @@
 #include "../include/Buttons.h"
 #include "../include/Env.h"
+#include "../include/SettingsWindow.h"
+#include "../include/TextRenderer.h"
 
-UIButtons::UIButtons() {}
+UIButtons::UIButtons(SettingsWindow* settings)
+    : settingsWindow(settings) {}
 
 void UIButtons::render(SDL_Renderer* renderer, int windowWidth) {
     const int BUTTON_MARGIN = 10;
@@ -18,6 +21,14 @@ void UIButtons::render(SDL_Renderer* renderer, int windowWidth) {
 
         SDL_SetRenderDrawColor(renderer, 150, 150, 200, 255);
         SDL_RenderDrawRect(renderer, &buttons[i]);
+
+        // Draw button label
+        if (!buttonLabels[i].empty()) {
+            int textWidth = TextRenderer::width(buttonLabels[i], 1);
+            int textX = btnX + (BUTTON_WIDTH - textWidth) / 2;
+            int textY = btnY + (BUTTON_HEIGHT - TextRenderer::LINE_H) / 2;
+            TextRenderer::draw(renderer, textX, textY, buttonLabels[i], 1, 200, 200, 220);
+        }
     }
 }
 
@@ -34,8 +45,9 @@ int UIButtons::hitTest(int x, int y) const {
 bool UIButtons::handleClick(int x, int y, Env* sim) {
     if (!sim) return false;
     switch (hitTest(x, y)) {
-        case 0: sim->toggleLayer(); return true;   // env / background layer
-        case 1: sim->togglePaths(); return true;   // agent path overlay
+        case 0: sim->toggleLayer(); return true;      // env / background layer
+        case 1: sim->togglePaths(); return true;      // agent path overlay
+        case 6: settingsWindow->open(); return true;  // settings (rightmost button)
         default: return false;
     }
 }

@@ -6,6 +6,7 @@ class Env;
 class UIButtons;
 class Statistics;
 class ChatBox;
+class SettingsWindow;
 
 class System {
 public:
@@ -17,12 +18,13 @@ public:
     void shutdown();
 
 private:
+    // Window size — set at runtime from the display (fullscreen-desktop).
+    int WINDOW_WIDTH = 1280;
+    int WINDOW_HEIGHT = 800;
     // Constants
-    static constexpr int WINDOW_WIDTH = 1280;
-    static constexpr int WINDOW_HEIGHT = 800;
     static constexpr float WORLD_WIDTH = 800.0f;
     static constexpr float WORLD_HEIGHT = 600.0f;
-    static constexpr int MAX_AGENTS = 10;
+    static constexpr int MAX_AGENTS = 1;
     // Sim tick interval in real seconds = THE agent-speed knob.
     // Bigger value -> fewer ticks/sec -> slower agents. Smaller -> faster.
     static constexpr float FRAME_TIME = 1.0f / 12.0f;
@@ -42,6 +44,7 @@ private:
     UIButtons* uiButtons;
     Statistics* uiStats;
     ChatBox* uiText;
+    SettingsWindow* settingsWindow;
 
     // Env-window camera drag state (click-and-drag to pan).
     bool panningEnv = false;

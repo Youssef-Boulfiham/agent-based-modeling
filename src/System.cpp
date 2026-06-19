@@ -3,6 +3,7 @@
 #include "../include/Buttons.h"
 #include "../include/Statistics.h"
 #include "../include/ChatBox.h"
+#include "../include/SettingsWindow.h"
 #include <SDL2/SDL_image.h>
 #include <iostream>
 #include <thread>
@@ -10,7 +11,7 @@
 
 System::System()
     : window(nullptr), renderer(nullptr), simulation(nullptr),
-      uiButtons(nullptr), uiStats(nullptr), uiText(nullptr) {
+      uiButtons(nullptr), uiStats(nullptr), uiText(nullptr), settingsWindow(nullptr) {
 }
 
 System::~System() {
@@ -42,7 +43,7 @@ bool System::initSDL() {
         SDL_WINDOWPOS_CENTERED,
         WINDOW_WIDTH,
         WINDOW_HEIGHT,
-        SDL_WINDOW_SHOWN
+        SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP
     );
 
     if (!window) {
@@ -60,6 +61,10 @@ bool System::initSDL() {
         return false;
     }
 
+    // Fill the whole screen: use the actual window size (points == pixels with
+    // no HighDPI, so mouse hit-testing stays correct).
+    SDL_GetWindowSize(window, &WINDOW_WIDTH, &WINDOW_HEIGHT);
+
     return true;
 }
 
@@ -67,7 +72,9 @@ void System::initializeSimulation() {
     simulation = new Env(WORLD_WIDTH, WORLD_HEIGHT, MAX_AGENTS);
     simulation->initialize();
 
-    uiButtons = new UIButtons();
+    settingsWindow = new SettingsWindow();
+    settingsWindow->setWorld(simulation);   // bind single source of truth
+    uiButtons = new UIButtons(settingsWindow);
     uiStats = new Statistics(simulation);
     uiText = new ChatBox();
     uiText->setWorld(simulation);
@@ -99,6 +106,7 @@ void System::render() {
     simulation->renderEnv(renderer, envX, envY, envWidth, envHeight);
     uiStats->render(renderer, statsX, statsY, RIGHT_PANEL_WIDTH, statsHeight);
     uiText->render(renderer, textX, textY, textWidth, textHeight);
+    settingsWindow->render(renderer, WINDOW_WIDTH, WINDOW_HEIGHT);
 
     SDL_RenderPresent(renderer);
 }
@@ -115,10 +123,43 @@ void System::handleEvents(bool& running) {
             continue;
         }
 
+        // Arrows pan and 1/2 zoom the env camera — UNLESS the chat input is
+        // focused, in which case the keys go to the ChatBox at the bottom.
+        if (event.type == SDL_KEYDOWN && !uiText->isInputFocused()) {
+            int dx = 0, dy = 0;
+            switch (event.key.keysym.sym) {
+                case SDLK_LEFT:  dx = -1; break;
+                case SDLK_RIGHT: dx = +1; break;
+                case SDLK_UP:    dy = -1; break;
+                case SDLK_DOWN:  dy = +1; break;
+                default: break;
+            }
+            if (dx != 0 || dy != 0) {
+                simulation->panStep(dx, dy);
+                continue;   // consume: don't pass the arrow to the ChatBox
+            }
+
+            // 1 = zoom in, 2 = zoom out, focused on the env center.
+            int zdir = 0;
+            if (event.key.keysym.sym == SDLK_1) zdir = +1;
+            if (event.key.keysym.sym == SDLK_2) zdir = -1;
+            if (zdir != 0) {
+                SDL_Rect e = simulation->getEnvArea();
+                simulation->zoomAt(zdir, e.x + e.w / 2, e.y + e.h / 2);
+                continue;   // consume: don't type "1"/"2" into the ChatBox
+            }
+        }
+
         // Top-bar buttons get first dibs on a left click.
         if (event.type == SDL_MOUSEBUTTONDOWN &&
             event.button.button == SDL_BUTTON_LEFT &&
             uiButtons->handleClick(event.button.x, event.button.y, simulation))
+            continue;
+
+        // Settings window gets next dibs if open.
+        if (event.type == SDL_MOUSEBUTTONDOWN &&
+            event.button.button == SDL_BUTTON_LEFT &&
+            settingsWindow->handleClick(event.button.x, event.button.y))
             continue;
 
         // Env window owns scroll-to-zoom and click-and-drag pan when the
@@ -138,6 +179,7 @@ void System::handleEvents(bool& running) {
                              : static_cast<float>(event.wheel.y);
                 if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) dy = -dy;
                 if (dy != 0.0f) simulation->zoomAt(dy > 0 ? +1 : -1, mx, my);
+                uiText->blurInput();   // interacting with env releases the input
                 continue;   // consume: don't scroll the ChatBox
             }
         }
@@ -146,6 +188,7 @@ void System::handleEvents(bool& running) {
             event.button.button == SDL_BUTTON_LEFT &&
             inEnv(event.button.x, event.button.y)) {
             panningEnv = true;
+            uiText->blurInput();   // clicking the env releases the input
             lastMouseX = event.button.x;
             lastMouseY = event.button.y;
             continue;
@@ -216,6 +259,7 @@ void System::run() {
 void System::shutdown() {
     SDL_StopTextInput();
 
+    delete settingsWindow;
     delete uiButtons;
     delete uiStats;
     delete uiText;

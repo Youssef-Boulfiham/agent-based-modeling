@@ -323,6 +323,7 @@ void ChatBox::handleMouseDown(int mx, int my, int clicks) {
 
     if (SDL_PointInRect(&p, &inputArea)) {
         // ── Input region (independent of history) ──
+        inputFocused = true;               // arrows now edit text, not pan camera
         selRegion = SelRegion::Input;
         histHasSel = false;
         int col = inputColAt(mx);
@@ -340,6 +341,7 @@ void ChatBox::handleMouseDown(int mx, int my, int clicks) {
 
     if (SDL_PointInRect(&p, &logArea)) {
         // ── History region (independent of input) ──
+        inputFocused = false;              // clicking the log releases the input
         selRegion = SelRegion::History;
         inHasSel = false;
         unsigned long seq; int col;
@@ -362,7 +364,8 @@ void ChatBox::handleMouseDown(int mx, int my, int clicks) {
         return;
     }
 
-    // Clicked elsewhere: clear selections.
+    // Clicked elsewhere: clear selections and release input focus.
+    inputFocused = false;
     histHasSel = inHasSel = false;
     selRegion = SelRegion::None;
 }

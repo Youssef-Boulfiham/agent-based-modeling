@@ -7,11 +7,13 @@ uses. Run it to (re)produce the map layers:
 
     python3 map/map_generator.py
 
-Writes (into map/):
-    background.png    the navigation layer the app extracts its walkable grid from
-    map_overview.png  annotated overview of how the ABM reads that grid
+Layers are named layer_<N>_*.png so the stacking order is obvious: 1 sits
+farthest back, higher numbers paint on top. Writes (into map/):
+    layer_1_background.png   the nav layer the app extracts its walkable grid from
+    layer_2_map_overview.png annotated overview of how the ABM reads that grid
+    layer_5_coordinates.png  reference overlay: every nav-grid cell stamped (x,y)
 
-enviroment.png is hand art and is not generated here.
+layer_3_enviroment.png is hand art and is not generated here.
 
 The map: a center domain with a corridor frame, six tiled ring domains, and two
 corridors per ring domain on its inward sides — validated so every domain is
@@ -24,8 +26,9 @@ from collections import deque
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BG_OUT  = os.path.join(HERE, "background.png")
-OVR_OUT = os.path.join(HERE, "map_overview.png")
+BG_OUT    = os.path.join(HERE, "layer_1_background.png")
+OVR_OUT   = os.path.join(HERE, "layer_2_map_overview.png")
+COORD_OUT = os.path.join(HERE, "layer_5_coordinates.png")
 
 # ── Map model ────────────────────────────────────────────────────────────────
 MAP_W, MAP_H = 110, 70
@@ -344,11 +347,10 @@ def _topleft(g, rows, cols, target):
     return min(x for _, x in best), min(y for y, _ in best)
 
 
-def write_overview():
+def write_overview(g):
     # No title, no legend, no margins: image is exactly cols*CELL x rows*CELL so
-    # it shares the aspect of background.png / enviroment.png and lines up when
-    # the app cycles the layers.
-    g = _extract_grid()
+    # it shares the aspect of layer_1_background / layer_3_enviroment and lines up
+    # when the app cycles the layers. `g` is the extracted nav grid.
     rows, cols = len(g), len(g[0])
     im = Image.new("RGB", (cols * CELL, rows * CELL), VOID_RGB); d = ImageDraw.Draw(im)
     f_cell = _font(max(9, CELL - 9)); f_big = _font(int(CELL * 2.2), bold=True)
@@ -370,12 +372,37 @@ def write_overview():
     im.save(OVR_OUT)
 
 
+# ── Layer: layer_5_coordinates.png (per-cell nav-grid coordinates) ───────────
+def write_coordinates(g):
+    # Reference overlay: every nav-grid cell stamped with its own (x, y) — the
+    # SAME grid the agents walk (src/Env.cpp loadMaskFromImage, targetCols=176).
+    # Same CELL and dimensions as the overview, so it aligns pixel-for-pixel with
+    # the other layers. Cells are dimmed to keep the white (x,y) text legible;
+    # zoom in to read each coordinate. Origin (0,0) = top-left, x→right, y↓down.
+    rows, cols = len(g), len(g[0])
+    im = Image.new("RGB", (cols * CELL, rows * CELL), VOID_RGB); d = ImageDraw.Draw(im)
+    f = _font(max(9, int(CELL * 0.23)), bold=True)
+    for y in range(rows):
+        for x in range(cols):
+            v = g[y][x]; walk = v >= 0
+            x0, y0 = x * CELL, y * CELL
+            base = PALETTE[v][1] if walk else VOID_RGB
+            dim = tuple(c // 3 for c in base)  # dim the cell so coord text reads
+            d.rectangle([x0, y0, x0 + CELL - 1, y0 + CELL - 1], fill=dim, outline=(0, 0, 0))
+            _halo(d, (x0 + CELL // 2, y0 + CELL // 2), f"{x},{y}", f,
+                  (255, 255, 255), anchor="mm", hw=2)
+    im.save(COORD_OUT)
+
+
 def main():
     m, seed = canonical_map()
     write_background(m)
     print("wrote", os.path.relpath(BG_OUT), " (seed", seed, "grid", MAP_W, "x", MAP_H, ")")
-    write_overview()
+    grid = _extract_grid()
+    write_overview(grid)
     print("wrote", os.path.relpath(OVR_OUT))
+    write_coordinates(grid)
+    print("wrote", os.path.relpath(COORD_OUT))
 
 
 if __name__ == "__main__":

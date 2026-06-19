@@ -21,8 +21,11 @@ protected:
     std::vector<int> connections;          // ids of connected agents
 
     // Walking behavior (domain-driven)
+    // NOTE: `activity` is a BEHAVIOUR state, never a domain/color name.
+    //   {idle, working, offline, standby, walking to a domain}.
+    // The domain (color-named space) is tracked separately by targetDomain/roomOf.
     int targetDomain;                      // where agent MUST be (externally set)
-    std::string assignedActivity;          // idle or working (assigned when reaching domain)
+    std::string assignedActivity;          // behaviour state on arrival (idle/working/offline/standby)
 
     // Shared world context (passed at construction, read-only)
     class Env* world;
@@ -60,6 +63,8 @@ public:
 
 private:
     glm::vec2 pickPosition() const;
+    glm::vec2 pickWanderPosition() const;   // random stand-pos in CURRENT domain (idle wander)
+    std::string pickAssignedActivity() const; // draw a behaviour state on domain arrival
     void routeTo(glm::vec2 goal);
     void routeToDomain(int domain);
     std::vector<glm::vec2> bfs(glm::vec2 start, glm::vec2 goal) const;

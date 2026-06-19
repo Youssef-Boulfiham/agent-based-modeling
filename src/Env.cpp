@@ -167,9 +167,9 @@ void Env::buildWorld() {
     bool loaded = false;
 
     const char* imgPaths[] = {
-        "map/background.png",
-        "../map/background.png",
-        "../../map/background.png",
+        "map/layer_1_background.png",
+        "../map/layer_1_background.png",
+        "../../map/layer_1_background.png",
     };
     for (const char* p : imgPaths) {
         if (loadMaskFromImage(p, /*targetCols=*/176, cols, rows, flat)) {
@@ -181,7 +181,7 @@ void Env::buildWorld() {
     }
 
     if (!loaded) {
-        std::cerr << "WARNING: map/background.png not found; falling back to empty corridor grid\n";
+        std::cerr << "WARNING: map/layer_1_background.png not found; falling back to empty corridor grid\n";
         int c = static_cast<int>(width) / 10, r = static_cast<int>(height) / 10;
         grid = WalkGrid(c, r, 10, WalkGrid::CORRIDOR);
         domainList.clear();
@@ -277,7 +277,7 @@ void Env::step() {
             std::string msg;
             if (justSwitched) {
                 msg = std::string("Switched to ") + domainName(room);
-            } else if (act == "move to domain") {
+            } else if (act == "walking to a domain") {
                 msg = std::string("Moving to ") + domainName(target);
             } else if (act == "working") {
                 msg = std::string("Working in ") + domainName(room);
@@ -394,14 +394,24 @@ void Env::loadTextures(SDL_Renderer* renderer) {
         std::cerr << "WARNING: could not load " << name << "\n";
         return nullptr;
     };
-    bgTexture       = tryLoad("background.png");
-    envTexture      = tryLoad("enviroment.png");
-    overviewTexture = tryLoad("map_overview.png");  // generated; may be absent
+    bgTexture       = tryLoad("layer_1_background.png");
+    envTexture      = tryLoad("layer_3_enviroment.png");
+    overviewTexture = tryLoad("layer_2_map_overview.png");  // generated; may be absent
 }
 
-// Render environment view: background.png behind, enviroment.png on top, agents last.
+// Visible fraction of the map at a zoom level. Level 0 = whole map (1x). The
+// factors step evenly (1.5 apart) to a deeper 4x max, so each zoom press bites
+// noticeably more than the old 1x/2x/3x progression.
+float Env::zoomFrac(int level) const {
+    static constexpr float ZOOM_FACTOR[MAX_ZOOM_LEVEL + 1] = { 1.0f, 2.5f, 4.0f };
+    if (level < 0) level = 0;
+    if (level > MAX_ZOOM_LEVEL) level = MAX_ZOOM_LEVEL;
+    return 1.0f / ZOOM_FACTOR[level];
+}
+
+// Render environment view: layer_1_background behind, layer_3_enviroment on top, agents last.
 void Env::clampView() {
-    const float frac = 1.0f / static_cast<float>(zoomLevel + 1);
+    const float frac = zoomFrac(zoomLevel);
     const float maxOrigin = 1.0f - frac;
     if (viewX < 0.0f) viewX = 0.0f;  if (viewX > maxOrigin) viewX = maxOrigin;
     if (viewY < 0.0f) viewY = 0.0f;  if (viewY > maxOrigin) viewY = maxOrigin;
@@ -421,12 +431,12 @@ void Env::zoomAt(int dir, int mouseX, int mouseY) {
     if (sx < 0.0f) sx = 0.0f;  if (sx > 1.0f) sx = 1.0f;
     if (sy < 0.0f) sy = 0.0f;  if (sy > 1.0f) sy = 1.0f;
 
-    const float fracOld = 1.0f / static_cast<float>(zoomLevel + 1);
+    const float fracOld = zoomFrac(zoomLevel);
     const float u = viewX + sx * fracOld;   // map-normalized point under cursor
     const float v = viewY + sy * fracOld;
 
     zoomLevel = newLevel;
-    const float fracNew = 1.0f / static_cast<float>(zoomLevel + 1);
+    const float fracNew = zoomFrac(zoomLevel);
     viewX = u - sx * fracNew;
     viewY = v - sy * fracNew;
     clampView();
@@ -434,10 +444,19 @@ void Env::zoomAt(int dir, int mouseX, int mouseY) {
 
 void Env::panByPixels(int dx, int dy) {
     if (envArea.w <= 0 || envArea.h <= 0) return;
-    const float frac = 1.0f / static_cast<float>(zoomLevel + 1);
+    const float frac = zoomFrac(zoomLevel);
     // Grab the map: dragging right reveals content to the left.
     viewX -= (dx / static_cast<float>(envArea.w)) * frac;
     viewY -= (dy / static_cast<float>(envArea.h)) * frac;
+    clampView();
+}
+
+void Env::panStep(int dirX, int dirY) {
+    if (envArea.w <= 0 || envArea.h <= 0) return;
+    const float frac = zoomFrac(zoomLevel);
+    const float step = 0.15f * frac;   // 15% of the visible window per keypress
+    viewX += dirX * step;
+    viewY += dirY * step;
     clampView();
 }
 
@@ -450,7 +469,7 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
     // map, scaled up to fill the env area. The SAME transform drives textures
     // (via a source sub-rect) and agents (via world->screen), so they stay
     // calibrated at every zoom level.
-    const float frac = 1.0f / static_cast<float>(zoomLevel + 1);
+    const float frac = zoomFrac(zoomLevel);
 
     // Source sub-rect of a full-map texture for the current view.
     auto texSrc = [&](SDL_Texture* t) -> SDL_Rect {
@@ -460,30 +479,8 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
                  static_cast<int>(tw * frac), static_cast<int>(th * frac) };
     };
 
-    // Void backdrop
-    SDL_SetRenderDrawColor(renderer, 16, 16, 16, 255);
-    SDL_RenderFillRect(renderer, &envArea);
-
-    // Overview view: draw the annotated overview alone (no bg/env/agents-art mix).
-    bool overviewView = (layerView == 2 && overviewTexture);
-
-    // Layer 1: background.png (navigation map / domains) — visible window only.
-    if (overviewView) {
-        SDL_Rect src = texSrc(overviewTexture);
-        SDL_RenderCopy(renderer, overviewTexture, &src, &envArea);
-    } else if (bgTexture) {
-        SDL_Rect src = texSrc(bgTexture);
-        SDL_RenderCopy(renderer, bgTexture, &src, &envArea);
-    }
-
-    // Layer 2: enviroment.png (detailed art) on top of the background.
-    // Only in enviroment view (0); background (1) and overview (2) skip it.
-    if (layerView == 0 && envTexture) {
-        SDL_Rect src = texSrc(envTexture);
-        SDL_RenderCopy(renderer, envTexture, &src, &envArea);
-    }
-
-    // Layer 3: agents. Map grid pixel space -> normalized -> visible window.
+    // World (agent grid pixel space) -> screen, shared by cell-anchored textures,
+    // the fallback domain fill, paths and agents so all stay calibrated at zoom.
     float worldW = static_cast<float>(grid.cols * grid.cellSize);
     float worldH = static_cast<float>(grid.rows * grid.cellSize);
     if (worldW <= 0) worldW = 800.0f;
@@ -494,6 +491,26 @@ void Env::renderEnv(SDL_Renderer* renderer, int x, int y, int width, int height)
     auto toScreenY = [&](float wy) {
         return y + static_cast<int>(((wy / worldH - viewY) / frac) * height);
     };
+
+    // Void backdrop
+    SDL_SetRenderDrawColor(renderer, 16, 16, 16, 255);
+    SDL_RenderFillRect(renderer, &envArea);
+
+    // Layer toggle (button 0 cycles 3 states; paint order = layer number):
+    //   0 -> layer_1_background only
+    //   1 -> layer_2_map_overview only
+    //   2 -> layer_3_enviroment only
+    bool overviewView = (layerView == 1 && overviewTexture);
+    if (overviewView) {
+        SDL_Rect src = texSrc(overviewTexture);
+        SDL_RenderCopy(renderer, overviewTexture, &src, &envArea);
+    } else if (layerView == 2 && envTexture) {
+        SDL_Rect src = texSrc(envTexture);
+        SDL_RenderCopy(renderer, envTexture, &src, &envArea);
+    } else if (bgTexture) {
+        SDL_Rect src = texSrc(bgTexture);
+        SDL_RenderCopy(renderer, bgTexture, &src, &envArea);
+    }
 
     // Fallback: no bg texture -> draw domains from the mask grid (transformed).
     if (!overviewView && !bgTexture) {

@@ -22,18 +22,24 @@ static const T& randChoice(const std::vector<T>& v) {
     return v[randInt(0, static_cast<int>(v.size()) - 1)];
 }
 
+// Agent's own grid level: each step advances this many underlying path cells.
+// The A* path is contiguous (neighbour cells), so a stride of 4 still follows
+// the walkable route — the agent never leaves the path / jumps off-map.
+static constexpr int STEP_CELLS = 4;
+
 Agent::Agent(int id, glm::vec2 startPos, Env* env)
-    : id(id), position(startPos), targetDomain(-1), assignedActivity("idle"), world(env) {
-    // Start in random activity with random valid position
+    : id(id), position(startPos), activity("idle"), targetDomain(-1),
+      assignedActivity("idle"), world(env) {
+    // Start standing in a random domain with a valid position. The domain is
+    // the (color-named) space; `activity` stays a behaviour state, never a name.
     if (world) {
         const auto& names = world->getActivityNames();
         if (!names.empty()) {
-            activity = randChoice(names);
-            const Activity* act = world->findActivity(activity);
+            const std::string& dname = randChoice(names);   // a DOMAIN (color) name
+            const Activity* act = world->findActivity(dname);
             if (act && !act->positions.empty()) {
                 positionCurrent = randChoice(act->positions);
                 targetDomain = act->domain;
-                assignedActivity = activity;
             }
         }
     }
@@ -51,46 +57,45 @@ void Agent::step(float /*deltaTime*/) {
 
     // Check: am I in the target domain?
     if (currentRoom != targetDomain) {
-        // NOT in target domain -> move_to_domain: route via corridor to domain center
-        activity = "move to domain";
+        // NOT in target domain -> route via corridor to domain center.
+        // Activity is the en-route behaviour state, NOT a domain name.
+        activity = "walking to a domain";
         if (path.empty()) {
             routeToDomain(targetDomain);
         }
-        // Move one cell toward goal (slowed by 40%)
+        // Advance STEP_CELLS cells toward goal (slowed by 40%). Position and
+        // path stay in sync: each iteration pops the next contiguous waypoint.
         if (!path.empty() && uniform01() < 0.6f) {
-            positionCurrent = path.front();
-            path.erase(path.begin());
-            position = positionCurrent;
+            for (int s = 0; s < STEP_CELLS && !path.empty(); ++s) {
+                positionCurrent = path.front();
+                path.erase(path.begin());
+                position = positionCurrent;
 
-            // Check if just arrived in target domain
-            if (world->roomOf(positionCurrent) == targetDomain) {
-                path.clear();
-                // Find an activity in this domain
-                assignedActivity = world->findActivityInDomain(targetDomain);
-                if (assignedActivity.empty()) {
-                    assignedActivity = "idle"; // Fallback
+                // On arrival, draw a behaviour state for this domain visit.
+                if (world->roomOf(positionCurrent) == targetDomain) {
+                    path.clear();
+                    assignedActivity = pickAssignedActivity();
+                    break;
                 }
             }
         }
         return;
     }
 
-    // In target domain -> execute assigned activity
+    // In target domain -> execute the assigned behaviour state.
+    // {idle, working, offline, standby} — for now all four wander the room
+    // (idle behaviour per the walking manual: stroll within the domain).
     activity = assignedActivity;
-    if (activity == "working") {
-        // Stay put
-        path.clear();
-        return;
-    }
 
-    // idle: wander within current domain
     if (path.empty()) {
-        path = bfs(positionCurrent, pickPosition());
+        path = bfs(positionCurrent, pickWanderPosition());
     }
     if (!path.empty() && uniform01() < 0.6f) {
-        positionCurrent = path.front();
-        path.erase(path.begin());
-        position = positionCurrent;
+        for (int s = 0; s < STEP_CELLS && !path.empty(); ++s) {
+            positionCurrent = path.front();
+            path.erase(path.begin());
+            position = positionCurrent;
+        }
     }
 }
 
@@ -179,6 +184,25 @@ glm::vec2 Agent::pickPosition() const {
     return randChoice(sorted);
 }
 
+// Random stand-position inside the domain the agent is CURRENTLY in.
+// Keyed off the domain (roomOf), never the activity string — so idle wander
+// works for any behaviour state. Idle = fully random per the walking manual.
+glm::vec2 Agent::pickWanderPosition() const {
+    int d = world->roomOf(positionCurrent);
+    std::string dname = world->findActivityInDomain(d);
+    if (dname.empty()) return positionCurrent;
+    const Activity* act = world->findActivity(dname);
+    if (!act || act->positions.empty()) return positionCurrent;
+    return randChoice(act->positions);
+}
+
+// Draw a behaviour state when the agent reaches its target domain.
+// working/offline/standby currently behave like idle (wander the room).
+std::string Agent::pickAssignedActivity() const {
+    static const char* states[] = {"idle", "working", "offline", "standby"};
+    return states[randInt(0, 3)];
+}
+
 std::vector<int> Agent::allowedDomains() const {
     std::vector<int> allowed;
     const Activity* act = world->findActivity(activity);
@@ -202,7 +226,7 @@ void Agent::routeToDomain(int domain) {
     // Route over any walkable (non-BLOCKED) cell — matches the sandbox reference
     // bfs() which has no domain filter. A restricted {domain} filter traps an
     // agent in the interior of its current domain (its own cells aren't allowed),
-    // leaving it frozen in "move to domain". Empty filter => all walkable.
+    // leaving it frozen in "walking to a domain". Empty filter => all walkable.
     std::vector<int> allowed = {};
     Path p = Pathfinding::findPath(positionCurrent, goal, grid, allowed);
     if (p.found) {

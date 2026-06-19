@@ -32,6 +32,10 @@ private:
     bool showAgentAgent = true; // filter toggle for agent-to-agent chatter
     int userMsgCount = 0;       // rotates which agent a user message targets
 
+    // True once the user clicks the input line; only then do arrow keys edit
+    // text. Otherwise arrows pan the env camera (System checks isInputFocused).
+    bool inputFocused = false;
+
     SDL_Rect toggleBtn{0, 0, 0, 0};
     SDL_Rect jumpBtn{0, 0, 0, 0};
 
@@ -71,6 +75,10 @@ public:
 
     void setWorld(Env* w) { world = w; }
     void render(SDL_Renderer* renderer, int x, int y, int width, int height);
+
+    // Input focus: arrows edit text only while the input line is focused.
+    bool isInputFocused() const { return inputFocused; }
+    void blurInput() { inputFocused = false; }
 
     // Single entry point: route one SDL event (text input, editing keys, mouse,
     // wheel) to the right handler. System forwards every non-system event here.

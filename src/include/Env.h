@@ -35,19 +35,20 @@ private:
     SDL_Rect envArea;
 
     // Visual layers (loaded lazily on first render). The three map/*.png:
-    //   background.png   -> the navigation map / domains
-    //   enviroment.png   -> detailed art, drawn on top of background
-    //   map_overview.png -> annotated overview (how the ABM reads the map)
-    //   agents           -> drawn last
+    //   layer_1_background.png   -> the navigation map / domains
+    //   layer_2_map_overview.png -> annotated overview (how the ABM reads the map)
+    //   layer_3_enviroment.png   -> detailed art (fills the map)
+    //   agents                   -> drawn last
     SDL_Texture* bgTexture = nullptr;
     SDL_Texture* envTexture = nullptr;
     SDL_Texture* overviewTexture = nullptr;
     bool texturesTried = false;
 
-    // Layer view (first top-left button cycles through the three map PNGs):
-    //   0 -> enviroment: background + enviroment art on top
-    //   1 -> background:  background layer only
-    //   2 -> overview:    map_overview.png (annotated grid)
+    // Layer view: the first top-left button cycles 3 toggles, each maps to a
+    // layer (paint order = layer number, 1 farthest back):
+    //   0 -> layer_1_background.png   (only)
+    //   1 -> layer_2_map_overview.png (only)
+    //   2 -> layer_3_enviroment.png   (only)
     int layerView = 0;
     static constexpr int LAYER_COUNT = 3;
     // Path overlay toggle (second top-left button): draw each agent's planned
@@ -55,13 +56,17 @@ private:
     bool showPaths = false;
 
     // --- Environment camera (zoom + pan) — env window ONLY ---
-    // 3 zoom levels: factor 1x / 2x / 3x. The visible window is always clamped
-    // inside the map so map art (textures) and agents share one transform and
-    // stay calibrated. viewX/viewY are the normalized [0,1] top-left of the
-    // visible window; visible fraction of the map = 1/(zoomLevel+1).
+    // 3 zoom levels with evenly-stepped factors 1x / 2.5x / 4x (see zoomFrac).
+    // The visible window is always clamped inside the map so map art (textures)
+    // and agents share one transform and stay calibrated. viewX/viewY are the
+    // normalized [0,1] top-left of the visible window; visible fraction of the
+    // map = zoomFrac(zoomLevel).
     int   zoomLevel = 0;                 // 0..MAX_ZOOM_LEVEL
     float viewX = 0.0f, viewY = 0.0f;    // normalized top-left of visible window
     static constexpr int MAX_ZOOM_LEVEL = 2;
+    // Visible fraction of the map at a zoom level (1/factor). Factors step
+    // evenly to a deeper max so each zoom press bites more.
+    float zoomFrac(int level) const;
     void clampView();
 
     void buildWorld();
@@ -109,6 +114,9 @@ public:
     void zoomAt(int dir, int mouseX, int mouseY);
     // Click-and-drag pan (grab the map). Pixel delta of the mouse this frame.
     void panByPixels(int dx, int dy);
+    // Arrow-key pan: shift the view one step in the given direction
+    // (dirX/dirY in {-1,0,+1}; +x moves view right, +y moves view down).
+    void panStep(int dirX, int dirY);
 
     void addAgent(glm::vec2 position);
     void removeAgent(int index);

@@ -1,0 +1,4 @@
+# secrets — never commit OAuth tokens / API keys
+secrets.local
+__pycache__/
+*.pyc
