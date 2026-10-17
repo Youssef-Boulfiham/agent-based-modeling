@@ -1,0 +1,6 @@
+# Personal finance data: this repository is public
+financien-*.json
+financien-*.csv
+
+# OS
+.DS_Store
